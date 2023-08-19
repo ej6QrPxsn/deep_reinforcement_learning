@@ -3,7 +3,6 @@ import os
 import numpy as np
 import multiprocessing as mp
 from multiprocessing import shared_memory
-from config import Config
 
 from env import EnvOutput
 

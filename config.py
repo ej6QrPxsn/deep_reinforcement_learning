@@ -25,6 +25,8 @@ class Config:
       ('policy', 'f4', self.seq_len + 1),
       ('beta', 'f4', self.seq_len + 1),
       ('gamma', 'f4', self.seq_len + 1),
+      ('hidden_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
+      ('cell_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
     ])
 
     # 環境データ定義
@@ -44,8 +46,11 @@ class Config:
   # バッチ数
   batch_size = 32
 
+  replay_period = 40
+  trace_length = 5
+
   # シーケンス数
-  seq_len = 5
+  seq_len = replay_period + trace_length
 
   # アクター数
   num_actors = 12
@@ -81,6 +86,8 @@ class Config:
   target_update_period = 2500
   rescaling_epsilon = 1e-3
 
-  replay_period = 0
+  # LSTM
+  lstm_state_size = 512
+  lstm_num_layers = 1
 
   num_train_log = 4

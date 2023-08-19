@@ -38,7 +38,7 @@ if __name__ == '__main__':
   p.start()
   processes.append(p)
 
-  infer_model = QNetwork(device, config.action_space)
+  infer_model = QNetwork(device, config)
   infer_model.share_memory()
   infer_model.to(device)
 

@@ -5,7 +5,7 @@ from config import Config
 from local_buffer import LocalBuffer
 from models import DQNAgent
 from shared_data import SharedEnvData
-from utils import SelectActionOutput, get_agent_input, get_agent_input_from_transition, get_input_for_compute_loss, retrace_loss
+from utils import AgentInputData, SelectActionOutput, to_agent_input, get_agent_input_burn_in_from_transition, get_agent_input_from_transition, get_input_for_compute_loss, retrace_loss
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 import zstandard as zstd
@@ -15,13 +15,25 @@ def eval_loop(infer_model, shared_env_data: SharedEnvData, device):
   shared_env_data.shared.get_shared_memory()
   batch_size = 1
 
+  prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
   while True:
     _, env_output, betas, _ = shared_env_data.get_env_data()
-    select_action_output = infer_model.select_actions(
+    data = AgentInputData(
+        state=np.expand_dims(env_output.next_state, axis=1),
+        hidden_state=prev_hidden_states,
+        cell_state=prev_cell_states,
+    )
+    select_action_output: SelectActionOutput = infer_model.select_actions(
       # seq 1 を追加
-      get_agent_input(np.expand_dims(env_output.next_state, axis=1), device),
+      to_agent_input(data, device),
       betas, batch_size)
     shared_env_data.put_action(select_action_output.action[0])
+
+    if env_output.done:
+      prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+    else:
+      prev_hidden_states = select_action_output.hidden_state
+      prev_cell_states = select_action_output.cell_state
 
 
 def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_datas, device, config: Config):
@@ -39,31 +51,34 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   for shared_env_data in shared_env_datas:
     shared_env_data.shared.get_shared_memory()
 
-  local_buffer = LocalBuffer(env_ids, config)
+  local_buffer = LocalBuffer(batch_size, config)
   batched_layer = BatchedLayer(env_ids, shared_env_datas, config)
+
+  prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
 
   batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
 
+  agent_input_data = AgentInputData(
+    state=np.expand_dims(batched_env_output.next_state, axis=1),
+    hidden_state=prev_hidden_states,
+    cell_state=prev_cell_states,
+  )
+
   select_action_output: SelectActionOutput = infer_model.select_actions(
-    get_agent_input(
-      # seq 1を追加
-      np.expand_dims(batched_env_output.next_state, axis=1),
-      device),
+    to_agent_input(agent_input_data, device),
     betas, batch_size)
 
   batched_layer.send_actions(select_action_output.action)
 
-  states = batched_env_output.next_state.copy()
   while True:
     batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
-    next_states = batched_env_output.next_state
 
-    ret = local_buffer.add(states, select_action_output, batched_env_output, betas, gammas)
+    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, betas, gammas)
     if ret and transition_queue.qsize() < 10:
       transitions, qvalues = ret
-      qvalues = torch.from_numpy(qvalues).to(torch.float32).to(device)
+      qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
 
-      input = get_input_for_compute_loss(transitions, device)
+      input = get_input_for_compute_loss(transitions, config, device)
 
       losses = retrace_loss(
         input=input,
@@ -78,24 +93,21 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
       for loss, transition in zip(losses, transitions):
         transition_queue.put((loss, cctx.compress(transition.tobytes())))
 
-    select_action_output = infer_model.select_actions(
-      get_agent_input(
-        # seq 1を追加
-        np.expand_dims(batched_env_output.next_state, axis=1),
-        device),
+    agent_input_data = local_buffer.get_agent_input()
+
+    select_action_output: SelectActionOutput = infer_model.select_actions(
+      to_agent_input(agent_input_data, device),
       betas, batch_size)
 
     # 選択アクションをアクターに送信
     batched_layer.send_actions(select_action_output.action)
-
-    states = next_states.copy()
 
 
 def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: Config):
   if rank == 0:
     summary_writer = SummaryWriter("logs")
 
-  agent = DQNAgent(device, config.action_space)
+  agent = DQNAgent(device, config)
   agent.qnet.load_state_dict(infer_model.state_dict())
   agent.target_qnet.load_state_dict(infer_model.state_dict())
 
@@ -106,14 +118,20 @@ def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: 
     #: リプレイバッファからミニバッチを取得
     indexes, transitions, is_weights = sample_queue.get()
 
-    model_input = get_agent_input_from_transition(transitions, config, device)
+    # burn in
+    model_input = get_agent_input_burn_in_from_transition(transitions, config, device)
+    _, qnet_lstm_state = agent.qnet(model_input)
+    _, target_qnet_lstm_state = agent.target_qnet(model_input)
 
-    behaviour_qvalues = agent.qnet(model_input)
-    target_qvalues = agent.target_qnet(model_input)
+    # 推論
+    qnet_input = get_agent_input_from_transition(transitions, qnet_lstm_state, config, device)
+    target_qnet_input = get_agent_input_from_transition(transitions, target_qnet_lstm_state, config, device)
+    qnet_out, _ = agent.qnet(qnet_input)
+    target_qnet_out, _ = agent.target_qnet(target_qnet_input)
 
-    input = get_input_for_compute_loss(transitions, device)
+    input = get_input_for_compute_loss(transitions, config, device)
 
-    losses = retrace_loss(input, behaviour_qvalues, target_qvalues, config, device)
+    losses = retrace_loss(input, qnet_out, target_qnet_out, config, device)
 
     losses = torch.nan_to_num(losses)
     priority_queue.put((indexes, losses.cpu().detach().numpy()))

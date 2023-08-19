@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 import numpy as np
 import torch
 from numpy import random
@@ -6,17 +6,26 @@ from config import Config
 rng = random.default_rng()  # or random.default_rng(0)
 
 
-class AgentInput(NamedTuple):
-  state: torch.Tensor
+class AgentInputData(NamedTuple):
+  state: np.ndarray
+  hidden_state: np.ndarray
+  cell_state: np.ndarray
 
 
 class SelectActionOutput(NamedTuple):
   action: np.ndarray
   qvalue: np.ndarray
   policy: np.ndarray
+  hidden_state: np.ndarray
+  cell_state: np.ndarray
 
 
-class InputForComputeLoss(NamedTuple):
+class AgentInput(NamedTuple):
+  state: torch.Tensor
+  prev_lstm_state: Tuple[torch.Tensor, torch.Tensor]
+
+
+class ComputeLossInput(NamedTuple):
   actions: torch.Tensor
   rewards: torch.Tensor
   dones: torch.Tensor
@@ -25,26 +34,43 @@ class InputForComputeLoss(NamedTuple):
   gammas: torch.Tensor
 
 
-def get_agent_input(states, device) -> AgentInput:
+def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   return AgentInput(
-      state=torch.from_numpy(states.copy()).to(torch.float32).to(device),
+      state=torch.from_numpy(agent_input_data.state.copy()).to(torch.float32).to(device),
+      prev_lstm_state=(
+        # batch, num_layer -> num_layer, batch
+        torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
+        torch.from_numpy(agent_input_data.cell_state.copy()).permute(1, 0, 2).to(device)
+      )
   )
 
 
-def get_agent_input_from_transition(transition, config: Config, device):
+def get_agent_input_burn_in_from_transition(transition, config: Config, device):
+  return AgentInput(
+    state=torch.from_numpy(transition["state"][:, :config.replay_period].copy()).to(torch.float32).to(device),
+    prev_lstm_state=(
+      # batch, num_layer -> num_layer, batch
+      torch.from_numpy(transition["hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
+      torch.from_numpy(transition["cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
+    )
+  )
+
+
+def get_agent_input_from_transition(transition, lstm_state, config: Config, device):
   return AgentInput(
     state=torch.from_numpy(transition["state"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+    prev_lstm_state=lstm_state
   )
 
 
-def get_input_for_compute_loss(transitions, device) -> InputForComputeLoss:
-  return InputForComputeLoss(
-      actions=torch.from_numpy(transitions["action"].copy()).to(torch.int64).unsqueeze(-1).to(device),
-      rewards=torch.from_numpy(transitions["reward"].copy()).to(torch.float32).to(device),
-      dones=torch.from_numpy(transitions["done"].copy()).to(torch.bool).to(device),
-      policies=torch.from_numpy(transitions["policy"].copy()).unsqueeze(-1).to(torch.float32).to(device),
-      betas=torch.from_numpy(transitions["beta"].copy()).unsqueeze(-1).to(torch.float32).to(device),
-      gammas=torch.from_numpy(transitions["gamma"].copy()).to(torch.float32).to(device),
+def get_input_for_compute_loss(transitions, config: Config, device) -> ComputeLossInput:
+  return ComputeLossInput(
+      actions=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
+      rewards=torch.from_numpy(transitions["reward"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+      dones=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
+      policies=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
+      betas=torch.from_numpy(transitions["beta"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
+      gammas=torch.from_numpy(transitions["gamma"][:, config.replay_period:].copy()).to(torch.float32).to(device),
   )
 
 
@@ -113,7 +139,10 @@ def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, n_steps):
   return target_q[:, s] + torch.stack(ret).sum(0)
 
 
-def retrace_loss(input: InputForComputeLoss, behaviour_qvalues, target_qvalues, config: Config, device):
+def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, config: Config, device):
+  # tdのj+1のため、実質的なseqは-1
+  seq_len = behaviour_qvalues.shape[1] - 1
+
   prevent_division_by_zero_tensor = torch.tensor(config.epsilon).to(device)
   one_tensor = torch.tensor(1).to(device)
 
@@ -128,6 +157,6 @@ def retrace_loss(input: InputForComputeLoss, behaviour_qvalues, target_qvalues, 
 
   trace_coefficients = get_trace_coefficients(input.actions, input.policies, target_policies, prevent_division_by_zero_tensor, one_tensor, config.retrace_lambda)
 
-  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gammas, config.seq_len)) ** 2 for s in range(config.seq_len)])
+  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gammas, seq_len)) ** 2 for s in range(seq_len)])
   # seq, batch -> batch
   return losses.sum(0)
