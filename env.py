@@ -13,7 +13,6 @@ class EnvOutput(NamedTuple):
   next_state: np.ndarray
   reward: np.ndarray
   done: np.ndarray
-  transition_done: np.ndarray
 
 
 def preprocess_frame(frame):
@@ -40,13 +39,10 @@ class AtariEnv(Env):
     self.env = gymnasium.make(env_name)
     self.action_space = self.env.action_space.n
 
-    self.lives = 5
     self.frames = None
     self.next_state = None
 
   def reset(self):
-    self.lives = 5
-
     #: ゲーム画面を二値化したりトリミングしたりする前処理
     frame = preprocess_frame(self.env.reset()[0])
     #: DQNでは直近4フレームの集合をstateとする
@@ -59,20 +55,13 @@ class AtariEnv(Env):
     done = terminated or truncated
     self.frames.append(preprocess_frame(next_frame))
 
-    #: ライフが減ったら経験上はゲーム終了扱いとする
-    if info["lives"] != self.lives:
-      self.lives = info["lives"]
-      transition_done = True
-    else:
-      transition_done = done
-
     # エピソード終了
     if done:
       next_state = self.reset()
     else:
       next_state = np.stack(self.frames, axis=0)
 
-    return EnvOutput(next_state, reward, done, transition_done)
+    return EnvOutput(next_state, reward, done)
 
 
 class BatchedEnv(Env):
@@ -83,7 +72,6 @@ class BatchedEnv(Env):
 
     self.next_states = np.empty((config.num_env_batches, *config.state_shape))
     self.rewards = np.zeros(config.num_env_batches)
-    self.transition_dones = np.zeros(config.num_env_batches, dtype=bool)
     self.dones = np.zeros(config.num_env_batches, dtype=bool)
 
   def step(self, actions) -> EnvOutput:
@@ -91,13 +79,11 @@ class BatchedEnv(Env):
       output = env.step(action)
       self.next_states[i] = output.next_state
       self.rewards[i] = output.reward
-      self.transition_dones[i] = output.transition_done
       self.dones[i] = output.done
 
     return EnvOutput(
         next_state=self.next_states,
         reward=self.rewards,
-        transition_done=self.transition_dones,
         done=self.dones,
     )
 

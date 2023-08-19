@@ -13,7 +13,6 @@ class BatchedLayer:
     self.batch_size = len(env_ids)
     self.next_states = np.empty((self.batch_size, *config.state_shape))
     self.rewards = np.zeros(self.batch_size)
-    self.transition_dones = np.zeros(self.batch_size, dtype=bool)
     self.dones = np.zeros(self.batch_size, dtype=bool)
     self.indexes = np.arange(self.batch_size).reshape(-1, config.num_env_batches)
     self.betas = np.zeros(self.batch_size)
@@ -38,7 +37,6 @@ class BatchedLayer:
       indexes = ids - first_env_id
       self.next_states[indexes] = env_outputs.next_state
       self.rewards[indexes] = env_outputs.reward
-      self.transition_dones[indexes] = env_outputs.transition_done
       self.dones[indexes] = env_outputs.done
       self.betas[indexes] = betas
       self.gammas[indexes] = gammas
@@ -47,5 +45,4 @@ class BatchedLayer:
         next_state=self.next_states,
         reward=self.rewards,
         done=self.dones,
-        transition_done=self.transition_dones
     ), self.betas, self.gammas

@@ -28,7 +28,7 @@ class LocalBuffer:
     self.work_transition["reward"][self.all_ids, self.indexes] = batched_env_output.reward
     self.work_transition["qvalue"][self.all_ids, self.indexes] = qvalues
     self.work_transition["policy"][self.all_ids, self.indexes] = policies
-    self.work_transition["done"][self.all_ids, self.indexes] = batched_env_output.transition_done
+    self.work_transition["done"][self.all_ids, self.indexes] = batched_env_output.done
     self.work_transition["beta"][self.all_ids, self.indexes] = betas
     self.work_transition["gamma"][self.all_ids, self.indexes] = gammas
     self.indexes += 1

@@ -32,7 +32,6 @@ class Config:
       ('next_state', 'u1', state_shape),
       ('reward', 'f4'),
       ('done', '?'),
-      ('transition_done', '?'),
       ('beta', 'f4'),
       ('gamma', 'f4'),
       ('action', 'u1'),

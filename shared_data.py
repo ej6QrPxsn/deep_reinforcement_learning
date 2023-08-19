@@ -60,7 +60,6 @@ class SharedEnvData():
     self.shared.data['next_state'][self.ids] = env_output.next_state
     self.shared.data['reward'][self.ids] = env_output.reward
     self.shared.data['done'][self.ids] = env_output.done
-    self.shared.data['transition_done'][self.ids] = env_output.transition_done
     self.shared.data['beta'][self.ids] = beta
     self.shared.data['gamma'][self.ids] = gamma
     self.env_event.set()
@@ -71,7 +70,6 @@ class SharedEnvData():
       next_state=self.shared.data['next_state'][self.ids],
       reward=self.shared.data['reward'][self.ids],
       done=self.shared.data['done'][self.ids],
-      transition_done=self.shared.data['transition_done'][self.ids],
     )
     betas = self.shared.data['beta'][self.ids],
     gammas = self.shared.data['gamma'][self.ids],
