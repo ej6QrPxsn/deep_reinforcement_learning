@@ -3,7 +3,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from config import Config
 
-from env import AtariEnv, BatchedEnv
+from env import AtariEnv, BatchedEnv, EnvOutput
 from meta_controller import MetaController
 from shared_data import SharedEnvData
 
@@ -21,7 +21,13 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
   env = BatchedEnv(config)
   states = env.reset()
 
-  share_env_data.put_states(states, betas)
+  share_env_data.put_env_data(
+    EnvOutput(
+      next_state=states,
+      reward=np.zeros(config.num_env_batches),
+      done=np.zeros(config.num_env_batches, dtype=bool),
+    ),
+    betas, gammas)
 
   while True:
     total_steps += 1
@@ -57,7 +63,13 @@ def tester_loop(share_env_data: SharedEnvData, config: Config):
   beta = np.zeros((1, 1))
   beta[:] = config.eval_epsilon
 
-  share_env_data.put_states(np.expand_dims(states, axis=0), beta)
+  share_env_data.put_env_data(
+    EnvOutput(
+      next_state=states,
+      reward=0,
+      done=False,
+    ),
+    beta, None)
 
   while True:
     total_steps += 1
@@ -67,7 +79,7 @@ def tester_loop(share_env_data: SharedEnvData, config: Config):
     env_output = env.step(action[0])
     episode_reward += env_output.reward
 
-    share_env_data.put_states(np.expand_dims(env_output.next_state, axis=0), beta)
+    share_env_data.put_env_data(env_output, beta, None)
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from utils import select_actions
+from utils import AgentInput, SelectActionOutput, select_actions
 
 
 class DQNAgent:
@@ -52,16 +52,26 @@ class QNetwork(nn.Module):
         nn.Linear(512, n_actions),
     )
 
-  def forward(self, x0):
-    feature_out = self.feature(x0 / 255.)
+  def forward(self, agent_input: AgentInput):
+    batch_size = agent_input.state.shape[0]
+    seq_size = agent_input.state.shape[1]
+
+    # batch, seq -> batch * seq
+    feature_in = agent_input.state.reshape(-1, *agent_input.state.shape[2:])
+    feature_out = self.feature(feature_in / 255.)
     value_out = self.value(feature_out)
     adv_out = self.advantage(feature_out)
 
-    return value_out + adv_out - torch.mean(adv_out, -1, True)
+    dueling_out = value_out + adv_out - torch.mean(adv_out, -1, True)
+    return dueling_out.reshape(batch_size, seq_size, *dueling_out.shape[1:])
 
-  def select_actions(self, x, epsilons, batch_size):
-    qvalues = self.forward(torch.from_numpy(x).to(torch.float32).to(self.device))
-    actions, policies = select_actions(qvalues.unsqueeze(1), self.action_space, epsilons, self.device, batch_size)
+  def select_actions(self, agent_input, epsilons, batch_size):
+    qvalues = self.forward(agent_input)
+    actions, policies = select_actions(qvalues, self.action_space, epsilons, self.device, batch_size)
     qvalues = qvalues.squeeze(1).cpu().detach().numpy().copy()
 
-    return actions, qvalues, policies
+    return SelectActionOutput(
+      action=actions,
+      qvalue=qvalues,
+      policy=policies,
+    )

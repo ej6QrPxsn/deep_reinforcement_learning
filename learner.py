@@ -5,18 +5,23 @@ from config import Config
 from local_buffer import LocalBuffer
 from models import DQNAgent
 from shared_data import SharedEnvData
-from utils import get_input_for_compute_loss, retrace_loss
+from utils import SelectActionOutput, get_agent_input, get_agent_input_from_transition, get_input_for_compute_loss, retrace_loss
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim as optim
 import zstandard as zstd
 
 
-def eval_loop(infer_model, shared_env_data: SharedEnvData):
+def eval_loop(infer_model, shared_env_data: SharedEnvData, device):
   shared_env_data.shared.get_shared_memory()
+  batch_size = 1
+
   while True:
-    _, next_states, betas = shared_env_data.get_states()
-    action, _, _ = infer_model.select_actions(next_states, betas, 1)
-    shared_env_data.put_action(action[0])
+    _, env_output, betas, _ = shared_env_data.get_env_data()
+    select_action_output = infer_model.select_actions(
+      # seq 1 を追加
+      get_agent_input(np.expand_dims(env_output.next_state, axis=1), device),
+      betas, batch_size)
+    shared_env_data.put_action(select_action_output.action[0])
 
 
 def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_datas, device, config: Config):
@@ -29,24 +34,31 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   )
   first_env_id = env_ids[0]
 
+  batch_size = len(env_ids)
+
   for shared_env_data in shared_env_datas:
     shared_env_data.shared.get_shared_memory()
 
   local_buffer = LocalBuffer(env_ids, config)
   batched_layer = BatchedLayer(env_ids, shared_env_datas, config)
 
-  next_states, betas = batched_layer.wait_states(first_env_id)
+  batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
 
-  actions, qvalues, policies = infer_model.select_actions(next_states, betas, len(env_ids))
+  select_action_output: SelectActionOutput = infer_model.select_actions(
+    get_agent_input(
+      # seq 1を追加
+      np.expand_dims(batched_env_output.next_state, axis=1),
+      device),
+    betas, batch_size)
 
-  batched_layer.send_actions(actions)
+  batched_layer.send_actions(select_action_output.action)
 
-  states = next_states.copy()
+  states = batched_env_output.next_state.copy()
   while True:
     batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
     next_states = batched_env_output.next_state
 
-    ret = local_buffer.add(states, actions, qvalues, policies, batched_env_output, betas, gammas)
+    ret = local_buffer.add(states, select_action_output, batched_env_output, betas, gammas)
     if ret and transition_queue.qsize() < 10:
       transitions, qvalues = ret
       qvalues = torch.from_numpy(qvalues).to(torch.float32).to(device)
@@ -66,9 +78,15 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
       for loss, transition in zip(losses, transitions):
         transition_queue.put((loss, cctx.compress(transition.tobytes())))
 
-    actions, qvalues, policies = infer_model.select_actions(next_states, betas, len(env_ids))
+    select_action_output = infer_model.select_actions(
+      get_agent_input(
+        # seq 1を追加
+        np.expand_dims(batched_env_output.next_state, axis=1),
+        device),
+      betas, batch_size)
 
-    batched_layer.send_actions(actions)
+    # 選択アクションをアクターに送信
+    batched_layer.send_actions(select_action_output.action)
 
     states = next_states.copy()
 
@@ -88,15 +106,12 @@ def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: 
     #: リプレイバッファからミニバッチを取得
     indexes, transitions, is_weights = sample_queue.get()
 
-    states = torch.from_numpy(transitions["state"]).to(torch.float32).to(device)
+    model_input = get_agent_input_from_transition(transitions, config, device)
+
+    behaviour_qvalues = agent.qnet(model_input)
+    target_qvalues = agent.target_qnet(model_input)
+
     input = get_input_for_compute_loss(transitions, device)
-
-    # batch * seq, value
-    state_shape = states.shape
-    model_inputs = states.view(-1, *state_shape[2:])
-
-    behaviour_qvalues = agent.qnet(model_inputs).view(state_shape[0], state_shape[1], -1)
-    target_qvalues = agent.target_qnet(model_inputs).view(state_shape[0], state_shape[1], -1)
 
     losses = retrace_loss(input, behaviour_qvalues, target_qvalues, config, device)
 

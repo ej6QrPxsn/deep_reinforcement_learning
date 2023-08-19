@@ -81,4 +81,6 @@ class Config:
   target_update_period = 2500
   rescaling_epsilon = 1e-3
 
+  replay_period = 0
+
   num_train_log = 4

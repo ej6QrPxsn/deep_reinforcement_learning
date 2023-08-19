@@ -6,6 +6,16 @@ from config import Config
 rng = random.default_rng()  # or random.default_rng(0)
 
 
+class AgentInput(NamedTuple):
+  state: torch.Tensor
+
+
+class SelectActionOutput(NamedTuple):
+  action: np.ndarray
+  qvalue: np.ndarray
+  policy: np.ndarray
+
+
 class InputForComputeLoss(NamedTuple):
   actions: torch.Tensor
   rewards: torch.Tensor
@@ -13,6 +23,18 @@ class InputForComputeLoss(NamedTuple):
   policies: torch.Tensor
   betas: torch.Tensor
   gammas: torch.Tensor
+
+
+def get_agent_input(states, device) -> AgentInput:
+  return AgentInput(
+      state=torch.from_numpy(states.copy()).to(torch.float32).to(device),
+  )
+
+
+def get_agent_input_from_transition(transition, config: Config, device):
+  return AgentInput(
+    state=torch.from_numpy(transition["state"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+  )
 
 
 def get_input_for_compute_loss(transitions, device) -> InputForComputeLoss:

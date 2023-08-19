@@ -71,8 +71,8 @@ class SharedEnvData():
       reward=self.shared.data['reward'][self.ids],
       done=self.shared.data['done'][self.ids],
     )
-    betas = self.shared.data['beta'][self.ids],
-    gammas = self.shared.data['gamma'][self.ids],
+    betas = self.shared.data['beta'][self.ids]
+    gammas = self.shared.data['gamma'][self.ids]
 
     self.env_event.clear()
 

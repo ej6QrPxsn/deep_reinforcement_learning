@@ -77,7 +77,7 @@ if __name__ == '__main__':
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=eval_loop, args=(infer_model, shared_env_datas[-1]))
+  p = mp.Process(target=eval_loop, args=(infer_model, shared_env_datas[-1], device))
   p.start()
   processes.append(p)
 

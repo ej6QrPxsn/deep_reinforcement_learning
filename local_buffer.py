@@ -1,5 +1,6 @@
 import numpy as np
 from config import Config
+from utils import SelectActionOutput
 
 
 class LocalBuffer:
@@ -22,12 +23,12 @@ class LocalBuffer:
 
     self.transition = np.zeros(len(env_ids), dtype=config.transition_dtype)
 
-  def add(self, states, actions, qvalues, policies, batched_env_output, betas, gammas):
+  def add(self, states, select_action_output: SelectActionOutput, batched_env_output, betas, gammas):
     self.work_transition["state"][self.all_ids, self.indexes] = states
-    self.work_transition["action"][self.all_ids, self.indexes] = actions
+    self.work_transition["action"][self.all_ids, self.indexes] = select_action_output.action
     self.work_transition["reward"][self.all_ids, self.indexes] = batched_env_output.reward
-    self.work_transition["qvalue"][self.all_ids, self.indexes] = qvalues
-    self.work_transition["policy"][self.all_ids, self.indexes] = policies
+    self.work_transition["qvalue"][self.all_ids, self.indexes] = select_action_output.qvalue
+    self.work_transition["policy"][self.all_ids, self.indexes] = select_action_output.policy
     self.work_transition["done"][self.all_ids, self.indexes] = batched_env_output.done
     self.work_transition["beta"][self.all_ids, self.indexes] = betas
     self.work_transition["gamma"][self.all_ids, self.indexes] = gammas
