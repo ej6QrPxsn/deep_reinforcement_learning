@@ -8,6 +8,8 @@ rng = random.default_rng()  # or random.default_rng(0)
 
 class AgentInputData(NamedTuple):
   state: np.ndarray
+  prev_action: np.ndarray
+  prev_reward: np.ndarray
   hidden_state: np.ndarray
   cell_state: np.ndarray
 
@@ -22,6 +24,8 @@ class SelectActionOutput(NamedTuple):
 
 class AgentInput(NamedTuple):
   state: torch.Tensor
+  prev_action: torch.Tensor
+  prev_reward: torch.Tensor
   prev_lstm_state: Tuple[torch.Tensor, torch.Tensor]
 
 
@@ -37,6 +41,8 @@ class ComputeLossInput(NamedTuple):
 def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   return AgentInput(
       state=torch.from_numpy(agent_input_data.state.copy()).to(torch.float32).to(device),
+      prev_action=torch.from_numpy(agent_input_data.prev_action.copy()).to(torch.int64).to(device),
+      prev_reward=torch.from_numpy(agent_input_data.prev_reward.copy()).to(torch.float32).to(device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
@@ -46,12 +52,23 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
 
 
 def get_agent_input_burn_in_from_transition(transition, config: Config, device):
+  prev_action = np.concatenate([
+    transition["prev_action"][:, np.newaxis],
+    transition["action"][:, :config.replay_period - 1]
+  ], axis=1)
+  prev_reward = np.concatenate([
+    transition["prev_reward"][:, np.newaxis],
+    transition["reward"][:, :config.replay_period - 1]
+  ], axis=1)
+
   return AgentInput(
     state=torch.from_numpy(transition["state"][:, :config.replay_period].copy()).to(torch.float32).to(device),
+    prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(device),
+    prev_reward=torch.from_numpy(prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
     prev_lstm_state=(
       # batch, num_layer -> num_layer, batch
-      torch.from_numpy(transition["hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
-      torch.from_numpy(transition["cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
+      torch.from_numpy(transition["prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
+      torch.from_numpy(transition["prev_cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
     )
   )
 
@@ -59,6 +76,8 @@ def get_agent_input_burn_in_from_transition(transition, config: Config, device):
 def get_agent_input_from_transition(transition, lstm_state, config: Config, device):
   return AgentInput(
     state=torch.from_numpy(transition["state"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+    prev_action=torch.from_numpy(transition["action"][:, config.replay_period - 1:-1].copy()).to(torch.int64).to(device),
+    prev_reward=torch.from_numpy(transition["reward"][:, config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(device),
     prev_lstm_state=lstm_state
   )
 

@@ -25,8 +25,10 @@ class Config:
       ('policy', 'f4', self.seq_len + 1),
       ('beta', 'f4', self.seq_len + 1),
       ('gamma', 'f4', self.seq_len + 1),
-      ('hidden_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
-      ('cell_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
+      ('prev_action', 'u1'),
+      ('prev_reward', 'f4'),
+      ('prev_hidden_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
+      ('prev_cell_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
     ])
 
     # 環境データ定義

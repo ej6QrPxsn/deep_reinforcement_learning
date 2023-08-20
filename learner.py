@@ -16,22 +16,28 @@ def eval_loop(infer_model, shared_env_data: SharedEnvData, device):
   batch_size = 1
 
   prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+  prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
+
   while True:
     _, env_output, betas, _ = shared_env_data.get_env_data()
-    data = AgentInputData(
-        state=np.expand_dims(env_output.next_state, axis=1),
-        hidden_state=prev_hidden_states,
-        cell_state=prev_cell_states,
+    agent_input_data = AgentInputData(
+      state=np.expand_dims(env_output.next_state, axis=1),
+      prev_action=prev_actions.reshape(batch_size, 1),
+      prev_reward=env_output.reward.reshape(batch_size, 1, 1),
+      hidden_state=prev_hidden_states,
+      cell_state=prev_cell_states,
     )
     select_action_output: SelectActionOutput = infer_model.select_actions(
       # seq 1 を追加
-      to_agent_input(data, device),
+      to_agent_input(agent_input_data, device),
       betas, batch_size)
     shared_env_data.put_action(select_action_output.action[0])
 
     if env_output.done:
       prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+      prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
     else:
+      prev_actions = select_action_output.action
       prev_hidden_states = select_action_output.hidden_state
       prev_cell_states = select_action_output.cell_state
 
@@ -55,23 +61,49 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   batched_layer = BatchedLayer(env_ids, shared_env_datas, config)
 
   prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+  prev_actions = np.zeros(batch_size, dtype=np.uint8)
 
   batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
 
+  # batched_env_output.next_state(t),
+  # batched_env_output.reward(t - 1),
+  # batched_env_output.done(t - 1)
+
+  # prev_actions(t - 1),
+  # prev_hidden_states(t - 1)
+  # prev_cell_states(t - 1)
+
   agent_input_data = AgentInputData(
     state=np.expand_dims(batched_env_output.next_state, axis=1),
+    prev_action=prev_actions.reshape(batch_size, 1),
+    prev_reward=batched_env_output.reward.reshape(batch_size, 1, 1),
     hidden_state=prev_hidden_states,
     cell_state=prev_cell_states,
   )
+
+  # agent_input_data.state(t),
+  # agent_input_data.prev_action(t - 1),
+  # agent_input_data.prev_reward(t - 1),
+  # agent_input_data.hidden_state(t - 1),
+  # agent_input_data.cell_state(t - 1),
 
   select_action_output: SelectActionOutput = infer_model.select_actions(
     to_agent_input(agent_input_data, device),
     betas, batch_size)
 
+  # select_action_output.action(t)
+  # select_action_output.qvalue(t)
+  # select_action_output.policy(t)
+  # select_action_output.hidden_states(t)
+  # select_action_output.cell_states(t)
+
   batched_layer.send_actions(select_action_output.action)
 
   while True:
     batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
+    # batched_env_output.next_state(t + 1),
+    # batched_env_output.reward(t),
+    # batched_env_output.done(t)
 
     ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, betas, gammas)
     if ret and transition_queue.qsize() < 10:
@@ -98,6 +130,10 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
     select_action_output: SelectActionOutput = infer_model.select_actions(
       to_agent_input(agent_input_data, device),
       betas, batch_size)
+
+    # select_action_output.action(t + 1)
+    # select_action_output.hidden_states(t + 1)
+    # select_action_output.cell_states(t + 1)
 
     # 選択アクションをアクターに送信
     batched_layer.send_actions(select_action_output.action)

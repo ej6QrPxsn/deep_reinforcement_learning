@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 
 from utils import AgentInput, SelectActionOutput, select_actions
+import torch.nn.functional as F
 
 
 class DQNAgent:
@@ -41,7 +42,7 @@ class QNetwork(nn.Module):
         nn.ReLU()
     )
 
-    self.lstm = nn.LSTM(input_size=512, hidden_size=config.lstm_state_size,
+    self.lstm = nn.LSTM(input_size=512 + config.action_space + 1, hidden_size=config.lstm_state_size,
                         num_layers=config.lstm_num_layers, batch_first=True)
 
     self.value = nn.Sequential(
@@ -66,6 +67,12 @@ class QNetwork(nn.Module):
 
     # batch * seq -> batch, seq
     lstm_in = feature_out.reshape(batch_size, seq_len, -1)
+
+    prev_action_one_hot = F.one_hot(agent_input.prev_action, num_classes=self.config.action_space)
+
+    # batch, (burn_in + )seq, conv outputs + reward + actions
+    lstm_in = torch.cat((lstm_in, agent_input.prev_reward, prev_action_one_hot), 2)
+
     lstm_out, lstm_states = self.lstm(lstm_in, agent_input.prev_lstm_state)
 
     # batch, seq -> batch * seq
