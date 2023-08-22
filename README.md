@@ -1,14 +1,20 @@
-# SEED RL + Ape-X + Retrace + Meta Controller
+# SEED RL + R2D2 + Retrace + Meta Controller
 
 ## 紹介
 
-SEED RLでのApe-Xをベースとして、Agent57のRetraceとMeta ControllerをPytorchで実装しています。
+SEED RLでのR2D2（Rescaleなし）をPytorchで実装しています。また、以下を追加で実装しています。
 
-* [Distributed Prioritized Experience Replay](https://openreview.net/pdf?id=H1Dy---0Z)(Ape-X)
+* RetraceとMeta Controller（Agent57）
+* Meta Controllerで選択するβとγの値算出(NGU）
+
+### 参照論文
+
+* [RECURRENT EXPERIENCE REPLAY IN DISTRIBUTED REINFORCEMENT LEARNING](https://openreview.net/pdf?id=r1lyTjAqYX)(R2D2)
 * [SEED RL: Scalable and Efficient Deep-RL with Accelerated Central Inference](https://openreview.net/pdf?id=rkgvXlrKwH)
+* [Never Give Up: Learning Directed Exploration Strategies](https://arxiv.org/pdf/2002.06038)(NGU)
 * [Agent57: Outperforming the Atari Human Benchmark](https://arxiv.org/pdf/2003.13350)
 
-## 準備
+## 実行準備
 
 ```
 pip install -r requirements.txt

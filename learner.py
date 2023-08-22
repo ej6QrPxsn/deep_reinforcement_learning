@@ -66,6 +66,8 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
 
   # batched_env_output.next_state(t),
+  # betas(t),
+  # gammas(t),
   # batched_env_output.reward(t - 1),
   # batched_env_output.done(t - 1)
 
@@ -102,6 +104,10 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   while True:
     batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
     # batched_env_output.next_state(t + 1),
+    # betas(t + 1),
+    # gammas(t + 1),
+    # prev_betas(t),
+    # prev_gammas(t),
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 

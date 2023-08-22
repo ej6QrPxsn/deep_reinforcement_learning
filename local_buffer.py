@@ -48,6 +48,26 @@ class LocalBuffer:
         self.agent_input["prev_cell_state"].copy(),
     )
 
+  def _to_transition(self, ids):
+    id_size = ids.size
+
+    self.transition["state"][:id_size] = self.work_transition["state"][ids]
+    self.transition["action"][:id_size] = self.work_transition["action"][ids]
+    self.transition["reward"][:id_size] = self.work_transition["reward"][ids]
+    self.transition["policy"][:id_size] = self.work_transition["policy"][ids]
+    self.transition["done"][:id_size] = self.work_transition["done"][ids]
+    self.transition["beta"][:id_size] = self.work_transition["beta"][ids]
+    self.transition["gamma"][:id_size] = self.work_transition["gamma"][ids]
+    self.transition["prev_action"][:id_size] = self.work_transition["prev_action"][ids, 0]
+    self.transition["prev_reward"][:id_size] = self.work_transition["prev_reward"][ids, 0]
+    self.transition["prev_hidden_state"][:id_size] = self.work_transition["prev_hidden_state"][ids, 0]
+    self.transition["prev_cell_state"][:id_size] = self.work_transition["prev_cell_state"][ids, 0]
+
+    ret = (self.transition[:id_size].copy(), self.work_transition["qvalue"][ids].copy())
+    self.transition[:id_size] = 0
+
+    return ret
+
   def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, betas, gammas):
     # prev_input.state(t),
     # prev_input.prev_action(t - 1),
@@ -90,28 +110,21 @@ class LocalBuffer:
     ret = ()
     full_ids = np.where(self.indexes > self.config.seq_len)[0]
     if full_ids.size > 0:
-      full_id_size = full_ids.size
-
-      self.transition["state"][:full_id_size] = self.work_transition["state"][full_ids].copy()
-      self.transition["action"][:full_id_size] = self.work_transition["action"][full_ids].copy()
-      self.transition["reward"][:full_id_size] = self.work_transition["reward"][full_ids].copy()
-      self.transition["policy"][:full_id_size] = self.work_transition["policy"][full_ids].copy()
-      self.transition["done"][:full_id_size] = self.work_transition["done"][full_ids].copy()
-      self.transition["beta"][:full_id_size] = self.work_transition["beta"][full_ids].copy()
-      self.transition["gamma"][:full_id_size] = self.work_transition["gamma"][full_ids].copy()
-      self.transition["prev_action"][:full_id_size] = self.work_transition["prev_action"][full_ids, 0].copy()
-      self.transition["prev_reward"][:full_id_size] = self.work_transition["prev_reward"][full_ids, 0].copy()
-      self.transition["prev_hidden_state"][:full_id_size] = self.work_transition["prev_hidden_state"][full_ids, 0].copy()
-      self.transition["prev_cell_state"][:full_id_size] = self.work_transition["prev_cell_state"][full_ids, 0].copy()
+      ret = self._to_transition(full_ids)
 
       self.work_transition[full_ids, :self.config.replay_period] = self.work_transition[full_ids, -self.config.replay_period:]
       self.indexes[full_ids] = self.config.replay_period
 
-      ret = (self.transition[:full_id_size], self.work_transition["qvalue"][full_ids].copy())
-
     done_ids = np.where(batched_env_output.done)[0]
     if done_ids.size > 0:
+      # doneの次以降をクリア
+      for done_id in done_ids:
+        self.work_transition["done"][done_id, self.indexes[done_id]:] = 0
+
+      ret = self._to_transition(done_ids)
+
       self.indexes[done_ids] = 0
+
       self.agent_input["prev_action"][done_ids] = 0
       self.agent_input["prev_reward"][done_ids] = 0
       self.agent_input["prev_hidden_state"][done_ids] = 0

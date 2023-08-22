@@ -15,6 +15,7 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
 
   total_steps = 0
   episode_rewards = np.zeros(config.num_env_batches)
+  episode_counts = np.zeros(config.num_env_batches, dtype=int)
   meta_controller = MetaController(config)
   betas, gammas = meta_controller.reset()
 
@@ -29,6 +30,8 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
     ),
     betas, gammas)
 
+  episode_counts += 1
+
   while True:
     total_steps += 1
 
@@ -39,9 +42,10 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
 
     share_env_data.put_env_data(env_output, betas, gammas)
 
-    betas, gammas = meta_controller.update(episode_rewards)
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
+      betas, gammas = meta_controller.update(indexes, episode_counts, episode_rewards)
+      episode_counts[indexes] += 1
       for index in indexes:
         env_id = ids[index]
         if env_id in log_ids:

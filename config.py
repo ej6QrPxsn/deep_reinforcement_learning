@@ -46,18 +46,18 @@ class Config:
   shared_transition_name = "shared_transition_name"
 
   # バッチ数
-  batch_size = 32
+  batch_size = 64
 
-  replay_period = 40
-  trace_length = 5
+  replay_period = 32
+  trace_length = 32
 
   # シーケンス数
   seq_len = replay_period + trace_length
 
   # アクター数
-  num_actors = 12
+  num_actors = 16
   # 1アクターあたり環境数
-  num_env_batches = 5
+  num_env_batches = 16
   # 全環境数
   num_train_envs = num_actors * num_env_batches
   # 推論プロセス数

@@ -138,7 +138,8 @@ def select_actions(qvalues, n_actions, epsilons, device, num_envs):
 
 
 def get_td(rewards, dones, target_policies, target_qvalues, target_q, gammas):
-  return rewards[:, :-1] + gammas[:, :-1] * ~dones[:, 1:] * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
+  # gammaもdoneも、次のステップから影響が出るため、前ステップのモノを使う
+  return rewards[:, :-1] + gammas[:, :-1] * ~dones[:, :-1] * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
 
 
 def get_trace_coefficients(actions, past_greedy_policies, target_policies, prevent_division_by_zero_tensor, one_tensor, retrace_lambda):
