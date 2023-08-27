@@ -23,7 +23,7 @@ class MetaController:
 
   def reset(self):
     self._reward_table[self._all_ids] = 0
-    self._arm_index[self._all_ids] = 0
+    self._arm_index[self._all_ids] = self._config.num_arms - 1
     beta = np.take_along_axis(self._betas, self._arm_index, axis=1)
     gamma = np.take_along_axis(self._gammas, self._arm_index, axis=1)
     return beta.squeeze(-1), gamma.squeeze(-1)
@@ -37,7 +37,7 @@ class MetaController:
     gamma = np.take_along_axis(self._gammas, self._arm_index, axis=1)
     return beta.squeeze(-1), gamma.squeeze(-1)
 
-  def _arg_max_index(self, ids, steps):
+  def _get_max_arg_index(self, ids, steps):
     steps = np.where(steps < 2, 2, steps)
     window_size = self._config.bandit_window_size
     np_window_size = np.empty(len(ids))
@@ -48,9 +48,9 @@ class MetaController:
 
   def _get_arm_index(self, ids, steps):
     batch_size = len(ids)
-    indexes = np.where(steps[ids] < self._config.num_arms, steps[ids],
+    indexes = np.where(steps[ids] < self._config.num_arms, self._config.num_arms - steps[ids] - 1,
                        np.where(self._rng.random(batch_size) >= self._config.bandit_epsilon,
-                                self._arg_max_index(ids, steps),
+                                self._get_max_arg_index(ids, steps),
                                 self._rng.integers(0, self._config.num_arms - 1, size=batch_size))
                        )
     return indexes

@@ -112,7 +112,7 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
     # batched_env_output.done(t)
 
     ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, betas, gammas)
-    if ret and transition_queue.qsize() < 10:
+    if ret and transition_queue.qsize() < config.num_train_envs:
       transitions, qvalues = ret
       qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
 

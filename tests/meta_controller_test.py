@@ -3,7 +3,7 @@ from config import Config
 from meta_controller import MetaController
 
 
-def test_arm_max_index():
+def test_get_max_arg_index():
   config = Config()
 
   config.num_env_batches = 3
@@ -30,7 +30,7 @@ def test_arm_max_index():
   meta_controller._reward_table[ids, 0, 25] = np.array([3, 4, 5])
   meta_controller._reward_table[ids, 3, 25] = np.array([3, 4, 5])
 
-  values = meta_controller._arg_max_index(ids, steps)
+  values = meta_controller._get_max_arg_index(ids, steps)
   expected = np.array([25, 15, 25])
 
   np.testing.assert_array_equal(values, expected)
