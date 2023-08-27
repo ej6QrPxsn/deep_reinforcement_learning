@@ -119,7 +119,7 @@ class LocalBuffer:
     if done_ids.size > 0:
       # doneの次以降をクリア
       for done_id in done_ids:
-        self.work_transition["done"][done_id, self.indexes[done_id]:] = 0
+        self.work_transition[done_id, self.indexes[done_id]:] = 0
 
       ret = self._to_transition(done_ids)
 

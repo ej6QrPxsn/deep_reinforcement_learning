@@ -51,37 +51,6 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   )
 
 
-def get_agent_input_burn_in_from_transition(transition, config: Config, device):
-  prev_action = np.concatenate([
-    transition["prev_action"][:, np.newaxis],
-    transition["action"][:, :config.replay_period - 1]
-  ], axis=1)
-  prev_reward = np.concatenate([
-    transition["prev_reward"][:, np.newaxis],
-    transition["reward"][:, :config.replay_period - 1]
-  ], axis=1)
-
-  return AgentInput(
-    state=torch.from_numpy(transition["state"][:, :config.replay_period].copy()).to(torch.float32).to(device),
-    prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(device),
-    prev_reward=torch.from_numpy(prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
-    prev_lstm_state=(
-      # batch, num_layer -> num_layer, batch
-      torch.from_numpy(transition["prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
-      torch.from_numpy(transition["prev_cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
-    )
-  )
-
-
-def get_agent_input_from_transition(transition, lstm_state, config: Config, device):
-  return AgentInput(
-    state=torch.from_numpy(transition["state"][:, config.replay_period:].copy()).to(torch.float32).to(device),
-    prev_action=torch.from_numpy(transition["action"][:, config.replay_period - 1:-1].copy()).to(torch.int64).to(device),
-    prev_reward=torch.from_numpy(transition["reward"][:, config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(device),
-    prev_lstm_state=lstm_state
-  )
-
-
 def get_input_for_compute_loss(transitions, config: Config, device) -> ComputeLossInput:
   return ComputeLossInput(
       actions=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
@@ -138,8 +107,8 @@ def select_actions(qvalues, n_actions, epsilons, device, num_envs):
 
 
 def get_td(rewards, dones, target_policies, target_qvalues, target_q, gammas):
-  # gammaもdoneも、次のステップから影響が出るため、前ステップのモノを使う
-  return rewards[:, :-1] + gammas[:, :-1] * ~dones[:, :-1] * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
+  # doneは次のステップから影響が出るため、前ステップを使う
+  return rewards[:, :-1] + gammas[:, 1:] * ~dones[:, :-1] * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
 
 
 def get_trace_coefficients(actions, past_greedy_policies, target_policies, prevent_division_by_zero_tensor, one_tensor, retrace_lambda):

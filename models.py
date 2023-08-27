@@ -6,13 +6,6 @@ from utils import AgentInput, SelectActionOutput, select_actions
 import torch.nn.functional as F
 
 
-class DQNAgent:
-  def __init__(self, device, config):
-
-    self.qnet = QNetwork(device, config).to(device)
-    self.target_qnet = QNetwork(device, config).to(device)
-
-
 class QNetwork(nn.Module):
 
   def __init__(self, device, config, in_channels=4):

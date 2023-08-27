@@ -1,13 +1,12 @@
 import numpy as np
 import torch
+from agent import DQNAgent
 from batched_layer import BatchedLayer
 from config import Config
 from local_buffer import LocalBuffer
-from models import DQNAgent
 from shared_data import SharedEnvData
-from utils import AgentInputData, SelectActionOutput, to_agent_input, get_agent_input_burn_in_from_transition, get_agent_input_from_transition, get_input_for_compute_loss, retrace_loss
+from utils import AgentInputData, SelectActionOutput, to_agent_input, get_input_for_compute_loss, retrace_loss
 from torch.utils.tensorboard import SummaryWriter
-import torch.optim as optim
 import zstandard as zstd
 
 
@@ -62,6 +61,8 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
 
   prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
   prev_actions = np.zeros(batch_size, dtype=np.uint8)
+  prev_betas = np.zeros(batch_size, dtype=np.float32)
+  prev_gammas = np.zeros(batch_size, dtype=np.float32)
 
   batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
 
@@ -102,6 +103,8 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   batched_layer.send_actions(select_action_output.action)
 
   while True:
+    prev_betas = betas
+    prev_gammas = gammas
     batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
     # batched_env_output.next_state(t + 1),
     # betas(t + 1),
@@ -111,7 +114,7 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 
-    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, betas, gammas)
+    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, prev_betas, prev_gammas)
     if ret and transition_queue.qsize() < config.num_train_envs:
       transitions, qvalues = ret
       qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
@@ -151,41 +154,22 @@ def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: 
 
   agent = DQNAgent(device, config)
   agent.qnet.load_state_dict(infer_model.state_dict())
-  agent.target_qnet.load_state_dict(infer_model.state_dict())
+  agent.update_target()
 
-  optimizer = optim.Adam(agent.qnet.parameters(), lr=0.00048, eps=config.epsilon)
   steps = 0
 
   while True:
     #: リプレイバッファからミニバッチを取得
     indexes, transitions, is_weights = sample_queue.get()
 
-    # burn in
-    model_input = get_agent_input_burn_in_from_transition(transitions, config, device)
-    _, qnet_lstm_state = agent.qnet(model_input)
-    _, target_qnet_lstm_state = agent.target_qnet(model_input)
+    losses = agent.compute_loss(transitions)
 
-    # 推論
-    qnet_input = get_agent_input_from_transition(transitions, qnet_lstm_state, config, device)
-    target_qnet_input = get_agent_input_from_transition(transitions, target_qnet_lstm_state, config, device)
-    qnet_out, _ = agent.qnet(qnet_input)
-    target_qnet_out, _ = agent.target_qnet(target_qnet_input)
-
-    input = get_input_for_compute_loss(transitions, config, device)
-
-    losses = retrace_loss(input, qnet_out, target_qnet_out, config, device)
-
-    losses = torch.nan_to_num(losses)
     priority_queue.put((indexes, losses.cpu().detach().numpy()))
 
     # seq sum -> batch mean
     loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
 
-    optimizer.zero_grad()
-    loss.backward()
-
-    # 勾配反映
-    optimizer.step()
+    agent.train(loss)
 
     del transitions
 
@@ -196,6 +180,6 @@ def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: 
 
     steps += 1
 
-    #: 2500ステップごとにtarget-QネットワークをQネットワークと同期
-    if steps % 2500 == 0:
-      agent.target_qnet.load_state_dict(agent.qnet.state_dict())
+    #: target-QネットワークをQネットワークと同期
+    if steps % config.target_update_period == 0:
+      agent.update_target()
