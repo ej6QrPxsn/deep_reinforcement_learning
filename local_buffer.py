@@ -30,14 +30,24 @@ class LocalBuffer:
         ('prev_cell_state', 'f4', (config.lstm_num_layers, config.lstm_state_size)),
     ])
 
-    self.work_transition = np.zeros((batch_size, config.seq_len + 1), dtype=work_transition_dtype)
+    # | replay_period | trace_length | 1 |
+    #                 |replay_period | trace_length | 1 |
+    self.seq_len = config.seq_len + 1
+    self.len = config.seq_len + config.trace_length + 1
+
+    self.work_transition = np.zeros((batch_size, self.len), dtype=work_transition_dtype)
     self.all_ids = np.arange(batch_size)
     self.indexes = np.zeros(batch_size, dtype=int)
 
     self.transition = np.zeros(batch_size, dtype=config.transition_dtype)
 
+    # 損失計算用
+    self.loss_qvalues = np.empty((batch_size, self.seq_len, self.config.action_space))
+
     # 次の推論入力用
     self.agent_input = np.zeros(batch_size, dtype=agent_input_dtype)
+
+    self.base_indexes = np.zeros(batch_size, dtype=int)
 
   def get_agent_input(self):
     return AgentInputData(
@@ -49,22 +59,21 @@ class LocalBuffer:
     )
 
   def _to_transition(self, ids):
-    id_size = ids.size
+    for i, id in enumerate(ids):
+      self.transition["state"][i] = self.work_transition["state"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["action"][i] = self.work_transition["action"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["reward"][i] = self.work_transition["reward"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["policy"][i] = self.work_transition["policy"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["done"][i] = self.work_transition["done"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["beta"][i] = self.work_transition["beta"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["gamma"][i] = self.work_transition["gamma"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["prev_action"][i] = self.work_transition["prev_action"][id, self.base_indexes[id]]
+      self.transition["prev_reward"][i] = self.work_transition["prev_reward"][id, self.base_indexes[id]]
+      self.transition["prev_hidden_state"][i] = self.work_transition["prev_hidden_state"][id, self.base_indexes[id]]
+      self.transition["prev_cell_state"][i] = self.work_transition["prev_cell_state"][id, self.base_indexes[id]]
+      self.loss_qvalues[i] = self.work_transition["qvalue"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
 
-    self.transition["state"][:id_size] = self.work_transition["state"][ids]
-    self.transition["action"][:id_size] = self.work_transition["action"][ids]
-    self.transition["reward"][:id_size] = self.work_transition["reward"][ids]
-    self.transition["policy"][:id_size] = self.work_transition["policy"][ids]
-    self.transition["done"][:id_size] = self.work_transition["done"][ids]
-    self.transition["beta"][:id_size] = self.work_transition["beta"][ids]
-    self.transition["gamma"][:id_size] = self.work_transition["gamma"][ids]
-    self.transition["prev_action"][:id_size] = self.work_transition["prev_action"][ids, 0]
-    self.transition["prev_reward"][:id_size] = self.work_transition["prev_reward"][ids, 0]
-    self.transition["prev_hidden_state"][:id_size] = self.work_transition["prev_hidden_state"][ids, 0]
-    self.transition["prev_cell_state"][:id_size] = self.work_transition["prev_cell_state"][ids, 0]
-
-    ret = (self.transition[:id_size].copy(), self.work_transition["qvalue"][ids].copy())
-    self.transition[:id_size] = 0
+    ret = (self.transition[:len(ids)].copy(), self.loss_qvalues[:len(ids)].copy())
 
     return ret
 
@@ -108,22 +117,44 @@ class LocalBuffer:
     self.agent_input["prev_cell_state"] = select_action_output.cell_state
 
     ret = ()
-    full_ids = np.where(self.indexes > self.config.seq_len)[0]
-    if full_ids.size > 0:
-      ret = self._to_transition(full_ids)
+    # 蓄積長さ
+    store_length = self.indexes - self.base_indexes
+    store_ids = np.where(store_length >= self.seq_len)[0]
+    if store_ids.size > 0:
+      # シーケンス長さの蓄積があるなら遷移として使う
+      ret = self._to_transition(store_ids)
 
-      self.work_transition[full_ids, :self.config.replay_period] = self.work_transition[full_ids, -self.config.replay_period:]
-      self.indexes[full_ids] = self.config.replay_period
+      # エピソード初回の遷移
+      first_ids = np.where(self.base_indexes == 0)[0]
+      first_ids = list(set(store_ids) & set(first_ids))
+      if len(first_ids) > 0:
+        self.base_indexes[first_ids] = self.config.seq_len - self.config.replay_period
 
+      # エピソード2回目以降の遷移
+      second_ids = np.where(self.base_indexes > 0)[0]
+      second_ids = list(set(store_ids) & set(second_ids))
+      if len(second_ids) > 0:
+        # | replay_period | trace_length | 1 |
+        #                | replay_period | trace_length | 1 |
+        # | replay_period | trace_length | 1 |
+        #                | replay_period |
+        #                                    ^ <-index
+        self.work_transition[second_ids, :self.seq_len] = self.work_transition[second_ids, -self.seq_len:]
+        self.indexes[second_ids] = self.config.seq_len
+        # self.work_transition[second_ids, :-1] = self.work_transition[second_ids, 1:]
+        # self.indexes[second_ids] -= 1
+
+    # エピソード終了
     done_ids = np.where(batched_env_output.done)[0]
     if done_ids.size > 0:
-      # doneの次以降をクリア
-      for done_id in done_ids:
-        self.work_transition[done_id, self.indexes[done_id]:] = 0
-
-      ret = self._to_transition(done_ids)
+      # シーケンス長さの蓄積がある
+      store_ids = np.where(self.indexes >= self.seq_len)[0]
+      store_ids = list(set(store_ids) & set(done_ids))
+      if len(store_ids) > 0:
+        ret = self._to_transition(store_ids)
 
       self.indexes[done_ids] = 0
+      self.base_indexes[done_ids] = 0
 
       self.agent_input["prev_action"][done_ids] = 0
       self.agent_input["prev_reward"][done_ids] = 0

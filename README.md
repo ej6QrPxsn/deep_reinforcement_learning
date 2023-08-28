@@ -30,7 +30,15 @@ python main.py
 
 ### 実行環境
 
-Python 3.10 / Ryzen 5950x / RTX A4000 / Atari Game "Breakout"
+Python 3.10 / Ryzen 5950x / RTX A4000
+
+#### 設定
+
+* Atari Game："Breakout"
+* アクター数：16
+* 1アクターあたり環境数：16
+* 訓練環境数：256
+* 推論プロセス数：4
 
 ### ステップ数
 
