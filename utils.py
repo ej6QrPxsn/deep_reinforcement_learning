@@ -9,7 +9,9 @@ rng = random.default_rng()  # or random.default_rng(0)
 class AgentInputData(NamedTuple):
   state: np.ndarray
   prev_action: np.ndarray
-  prev_reward: np.ndarray
+  prev_extrinsic_reward: np.ndarray
+  prev_intrinsic_reward: np.ndarray
+  beta: np.ndarray
   hidden_state: np.ndarray
   cell_state: np.ndarray
 
@@ -25,7 +27,9 @@ class SelectActionOutput(NamedTuple):
 class AgentInput(NamedTuple):
   state: torch.Tensor
   prev_action: torch.Tensor
-  prev_reward: torch.Tensor
+  prev_extrinsic_reward: torch.Tensor
+  prev_intrinsic_reward: torch.Tensor
+  beta: torch.Tensor
   prev_lstm_state: Tuple[torch.Tensor, torch.Tensor]
 
 
@@ -42,7 +46,9 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   return AgentInput(
       state=torch.from_numpy(agent_input_data.state.copy()).to(torch.float32).to(device),
       prev_action=torch.from_numpy(agent_input_data.prev_action.copy()).to(torch.int64).to(device),
-      prev_reward=torch.from_numpy(agent_input_data.prev_reward.copy()).to(torch.float32).to(device),
+      prev_extrinsic_reward=torch.from_numpy(agent_input_data.prev_extrinsic_reward.copy()).to(torch.float32).to(device),
+      prev_intrinsic_reward=torch.from_numpy(agent_input_data.prev_intrinsic_reward.copy()).to(torch.float32).to(device),
+      beta=torch.from_numpy(agent_input_data.beta.copy()).to(torch.float32).to(device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
@@ -52,9 +58,10 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
 
 
 def get_input_for_compute_loss(transitions, config: Config, device) -> ComputeLossInput:
+  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + transitions["beta"][:, config.replay_period:] * transitions["intrinsic_reward"][:, config.replay_period:]
   return ComputeLossInput(
       actions=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
-      rewards=torch.from_numpy(transitions["reward"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+      rewards=torch.from_numpy(rewards.copy()).to(torch.float32).to(device),
       dones=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
       policies=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
       betas=torch.from_numpy(transitions["beta"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),

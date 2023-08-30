@@ -20,13 +20,15 @@ class Config:
     self.transition_dtype = np.dtype([
       ('state', 'u1', (self.seq_len + 1, *self.state_shape)),
       ('action', 'u1', self.seq_len + 1),
-      ('reward', 'f4', self.seq_len + 1),
+      ('extrinsic_reward', 'f4', self.seq_len + 1),
+      ('intrinsic_reward', 'f4', self.seq_len + 1),
       ('done', '?', self.seq_len + 1),
       ('policy', 'f4', self.seq_len + 1),
       ('beta', 'f4', self.seq_len + 1),
       ('gamma', 'f4', self.seq_len + 1),
       ('prev_action', 'u1'),
-      ('prev_reward', 'f4'),
+      ('prev_extrinsic_reward', 'f4'),
+      ('prev_intrinsic_reward', 'f4'),
       ('prev_hidden_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
       ('prev_cell_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
     ])
@@ -91,5 +93,18 @@ class Config:
   # LSTM
   lstm_state_size = 512
   lstm_num_layers = 1
+
+  # intrinsic reward
+  episodic_memory_capacity = 300000
+  controllable_state_size = 32
+  num_kernel = 10
+  kernel_cluster_distance = 0.008
+  kernel_epsilon = 0.008
+  kernel_pseudo_counts_constant = 0.001
+  kernel_maximum_similarity = 8
+  embedding_train_period = 5
+
+  RND_clipping_factor = 5
+  RND_train_period = 5
 
   num_train_log = 4

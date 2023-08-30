@@ -1,12 +1,13 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from config import Config
 
 from utils import AgentInput, SelectActionOutput, select_actions
 import torch.nn.functional as F
 
 
-class QNetwork(nn.Module):
+class R2D2Network(nn.Module):
 
   def __init__(self, device, config, in_channels=4):
     """
@@ -16,7 +17,7 @@ class QNetwork(nn.Module):
         in_channels (int): number of input channels
         n_actions (int): number of outputs
     """
-    super(QNetwork, self).__init__()
+    super(R2D2Network, self).__init__()
     self.config = config
     self.device = device
     self.feature = nn.Sequential(
@@ -35,7 +36,7 @@ class QNetwork(nn.Module):
         nn.ReLU()
     )
 
-    self.lstm = nn.LSTM(input_size=512 + config.action_space + 1, hidden_size=config.lstm_state_size,
+    self.lstm = nn.LSTM(input_size=512 + config.action_space + 3, hidden_size=config.lstm_state_size,
                         num_layers=config.lstm_num_layers, batch_first=True)
 
     self.value = nn.Sequential(
@@ -58,13 +59,17 @@ class QNetwork(nn.Module):
     feature_in = agent_input.state.reshape(-1, *agent_input.state.shape[2:])
     feature_out = self.feature(feature_in / 255.)
 
-    # batch * seq -> batch, seq
-    lstm_in = feature_out.reshape(batch_size, seq_len, -1)
-
     prev_action_one_hot = F.one_hot(agent_input.prev_action, num_classes=self.config.action_space)
 
     # batch, (burn_in + )seq, conv outputs + reward + actions
-    lstm_in = torch.cat((lstm_in, agent_input.prev_reward, prev_action_one_hot), 2)
+    lstm_in = torch.cat((
+      # batch * seq -> batch, seq
+      feature_out.reshape(batch_size, seq_len, -1),
+      prev_action_one_hot,
+      agent_input.prev_extrinsic_reward,
+      agent_input.prev_intrinsic_reward,
+      agent_input.beta,
+    ), 2)
 
     lstm_out, lstm_states = self.lstm(lstm_in, agent_input.prev_lstm_state)
 
@@ -95,3 +100,174 @@ class QNetwork(nn.Module):
       hidden_state=hidden_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
       cell_state=cell_state.permute(1, 0, 2).cpu().detach().numpy().copy()
     )
+
+
+class RNDPredictionNetwork(nn.Module):
+
+  def __init__(self, device, config, in_channels=4):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    super(RNDPredictionNetwork, self).__init__()
+    self.config = config
+    self.device = device
+    self.feature = nn.Sequential(
+        # (in - (kernel - 1) - 1) / stride + 1
+        # (84 - 8) / 4 + 1 = 20
+        nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
+        nn.ReLU(),
+        # (20 - 4) / 2 + 1 = 9
+        nn.Conv2d(32, 64, kernel_size=4, stride=2),
+        nn.ReLU(),
+        # (9 - 3) / 1 + 1 = 7
+        nn.Conv2d(64, 64, kernel_size=3, stride=1),
+        nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(7 * 7 * 64, 128),
+    )
+
+  def forward(self, x):
+    return self.feature(x / 255.)
+
+
+class RNDRandomNetwork(nn.Module):
+
+  def __init__(self, device, config, in_channels=4):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    super(RNDRandomNetwork, self).__init__()
+    self.config = config
+    self.device = device
+    self.feature = nn.Sequential(
+        # (in - (kernel - 1) - 1) / stride + 1
+        # (84 - 8) / 4 + 1 = 20
+        nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
+        nn.ReLU(),
+        # (20 - 4) / 2 + 1 = 9
+        nn.Conv2d(32, 64, kernel_size=4, stride=2),
+        nn.ReLU(),
+        # (9 - 3) / 1 + 1 = 7
+        nn.Conv2d(64, 64, kernel_size=3, stride=1),
+        nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(7 * 7 * 64, 128),
+    )
+
+  def forward(self, x):
+    return self.feature(x / 255.)
+
+
+class RNDNetwork(nn.Module):
+
+  def __init__(self, device, config: Config, in_channels=4):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    super(RNDNetwork, self).__init__()
+    self.config = config
+    self.device = device
+
+    self.predict = RNDPredictionNetwork(device, config)
+    self.predict.share_memory()
+    self.predict.to(device)
+
+    self.random = RNDRandomNetwork(device, config)
+    self.random.to(device)
+
+    self.random.load_state_dict(self.predict.state_dict())
+
+    self.criterion = nn.MSELoss(reduction="none")
+    self.optimizer = torch.optim.Adam(self.predict.parameters())
+
+  def forward(self, x):
+    rand_out = self.random(x)
+    predict_out = self.predict(x)
+
+    loss = self.criterion(rand_out, predict_out)
+    return loss.mean(1)
+
+  def train(self, transition):
+    state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period:].copy()).to(torch.float32).to(self.device)
+
+    rand_out = self.random(state.reshape(-1, *state.shape[2:]))
+    predict_out = self.predict(state.reshape(-1, *state.shape[2:]))
+
+    loss = self.criterion(rand_out, predict_out)
+
+    self.optimizer.zero_grad()
+    loss.mean().backward()
+    self.optimizer.step()
+
+
+class EmbeddingNetwork(nn.Module):
+
+  def __init__(self, device, config: Config, in_channels=4):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    super(EmbeddingNetwork, self).__init__()
+    self.config = config
+    self.device = device
+    self.feature = nn.Sequential(
+        # (in - (kernel - 1) - 1) / stride + 1
+        # (84 - 8) / 4 + 1 = 20
+        nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
+        nn.ReLU(),
+        # (20 - 4) / 2 + 1 = 9
+        nn.Conv2d(32, 64, kernel_size=4, stride=2),
+        nn.ReLU(),
+        # (9 - 3) / 1 + 1 = 7
+        nn.Conv2d(64, 64, kernel_size=3, stride=1),
+        nn.ReLU(),
+        nn.Flatten(),
+        nn.Linear(7 * 7 * 64, config.controllable_state_size),
+        nn.ReLU()
+    )
+    self.feature.share_memory()
+    self.feature.to(device)
+
+    self.train_net = nn.Sequential(
+        nn.Linear(64, 128),
+        nn.ReLU(),
+        nn.Linear(128, config.action_space),
+        nn.Softmax(dim=1)
+    )
+    self.train_net.to(device)
+
+    self.criterion = nn.CrossEntropyLoss()
+    self.optimizer = torch.optim.Adam(self.feature.parameters())
+
+  def forward(self, x):
+    return self.feature(x / 255.)
+
+  def train(self, transition):
+    state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period - 1:-1].copy()).to(torch.float32).to(self.device)
+    next_state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period:].copy()).to(torch.float32).to(self.device)
+    action = torch.from_numpy(transition["action"][:, -self.config.embedding_train_period - 1:-1].copy()).to(torch.int64).to(self.device)
+
+    ret1 = self.feature(state.reshape(-1, *state.shape[2:]))
+    ret2 = self.feature(next_state.reshape(-1, *next_state.shape[2:]))
+    out = self.train_net(torch.cat([ret1, ret2], dim=1))
+
+    loss = self.criterion(out, action.reshape(-1, *action.shape[2:]))
+
+    self.optimizer.zero_grad()
+    loss.backward()
+    self.optimizer.step()

@@ -8,7 +8,7 @@ from config import Config
 
 from env import AtariEnv
 from learner import eval_loop, inference_loop, train_loop
-from models import QNetwork
+from models import EmbeddingNetwork, R2D2Network, RNDNetwork
 from replay_buffer import replay_loop
 
 import os
@@ -38,9 +38,12 @@ if __name__ == '__main__':
   p.start()
   processes.append(p)
 
-  infer_model = QNetwork(device, config)
-  infer_model.share_memory()
-  infer_model.to(device)
+  infer_net = R2D2Network(device, config)
+  infer_net.share_memory()
+  infer_net.to(device)
+
+  RND_net = RNDNetwork(device, config)
+  embedding_net = EmbeddingNetwork(device, config)
 
   env_ids = np.arange(config.num_train_envs).reshape(config.num_actors, config.num_env_batches)
   log_ids = np.linspace(0, config.num_train_envs - 1, num=config.num_train_log, dtype=int)
@@ -66,7 +69,7 @@ if __name__ == '__main__':
 
   for i in range(config.num_inferences):
     actor_indexes = inference_actor_indexes[i]
-    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_model, transition_queue, shared_env_datas[actor_indexes], device, config))
+    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_net, RND_net, embedding_net, transition_queue, shared_env_datas[actor_indexes], device, config))
     p.start()
     processes.append(p)
 
@@ -77,11 +80,11 @@ if __name__ == '__main__':
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=eval_loop, args=(infer_model, shared_env_datas[-1], device))
+  p = mp.Process(target=eval_loop, args=(infer_net, RND_net, embedding_net, config, shared_env_datas[-1], device))
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=train_loop, args=(0, infer_model, sample_queue, priority_queue, device, config))
+  p = mp.Process(target=train_loop, args=(0, infer_net, RND_net, embedding_net, sample_queue, priority_queue, device, config))
   p.start()
   processes.append(p)
 

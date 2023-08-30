@@ -1,18 +1,18 @@
 import numpy as np
 import torch
-from models import QNetwork
+from models import R2D2Network
 
 from utils import AgentInput, get_input_for_compute_loss, retrace_loss
 import torch.optim as optim
 
 
-class DQNAgent:
+class R2D2Agent:
   def __init__(self, device, config):
     self.device = device
     self.config = config
 
-    self.qnet = QNetwork(device, config).to(device)
-    self.target_qnet = QNetwork(device, config).to(device)
+    self.qnet = R2D2Network(self.device, self.config).to(self.device)
+    self.target_qnet = R2D2Network(self.device, self.config).to(self.device)
     self._optimizer = optim.Adam(self.qnet.parameters(), lr=0.00048, eps=config.epsilon)
 
   def update_target(self):
@@ -23,15 +23,21 @@ class DQNAgent:
       transition["prev_action"][:, np.newaxis],
       transition["action"][:, :self.config.replay_period - 1]
     ], axis=1)
-    prev_reward = np.concatenate([
-      transition["prev_reward"][:, np.newaxis],
-      transition["reward"][:, :self.config.replay_period - 1]
+    prev_extrinsic_reward = np.concatenate([
+      transition["prev_extrinsic_reward"][:, np.newaxis],
+      transition["extrinsic_reward"][:, :self.config.replay_period - 1]
+    ], axis=1)
+    prev_intrinsic_reward = np.concatenate([
+      transition["prev_intrinsic_reward"][:, np.newaxis],
+      transition["intrinsic_reward"][:, :self.config.replay_period - 1]
     ], axis=1)
 
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, :self.config.replay_period].copy()).to(torch.float32).to(self.device),
       prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(self.device),
-      prev_reward=torch.from_numpy(prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      prev_extrinsic_reward=torch.from_numpy(prev_extrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      prev_intrinsic_reward=torch.from_numpy(prev_intrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      beta=torch.from_numpy(transition["beta"][:, :self.config.replay_period].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(transition["prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(self.device),
@@ -43,7 +49,9 @@ class DQNAgent:
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, self.config.replay_period:].copy()).to(torch.float32).to(self.device),
       prev_action=torch.from_numpy(transition["action"][:, self.config.replay_period - 1:-1].copy()).to(torch.int64).to(self.device),
-      prev_reward=torch.from_numpy(transition["reward"][:, self.config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      prev_extrinsic_reward=torch.from_numpy(transition["extrinsic_reward"][:, self.config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      prev_intrinsic_reward=torch.from_numpy(transition["intrinsic_reward"][:, self.config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
+      beta=torch.from_numpy(transition["beta"][:, self.config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
       prev_lstm_state=lstm_state
     )
 
