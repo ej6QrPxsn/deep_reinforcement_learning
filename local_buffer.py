@@ -1,12 +1,11 @@
 import numpy as np
 from config import Config
 from env import EnvOutput
-from reward_generator import RewardGenerator
 from utils import AgentInputData, SelectActionOutput
 
 
 class LocalBuffer:
-  def __init__(self, batch_size, config: Config, reward_generator: RewardGenerator) -> None:
+  def __init__(self, batch_size, config: Config, reward_generator) -> None:
     self.config = config
     self.reward_generator = reward_generator
 
@@ -88,7 +87,7 @@ class LocalBuffer:
 
     return ret
 
-  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, betas, gammas):
+  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, betas, gammas, intrinsic_rewards):
     # prev_input.state(t),
     # prev_input.prev_action(t - 1),
     # prev_input.prev_extrinsic_reward(t - 1),
@@ -105,9 +104,6 @@ class LocalBuffer:
     # batched_env_output.next_state(t + 1),
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
-
-    # 内部報酬
-    intrinsic_rewards = self.reward_generator.get_intrinsic_reward(self.all_ids, prev_input.state)
 
     self.work_transition["state"][self.all_ids, self.indexes] = prev_input.state[self.all_ids, 0]
     self.work_transition["action"][self.all_ids, self.indexes] = select_action_output.action
@@ -179,5 +175,7 @@ class LocalBuffer:
       self.agent_input["prev_intrinsic_reward"][done_ids] = 0
       self.agent_input["prev_hidden_state"][done_ids] = 0
       self.agent_input["prev_cell_state"][done_ids] = 0
+
+      self.reward_generator.reset(done_ids)
 
     return ret

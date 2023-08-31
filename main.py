@@ -8,13 +8,13 @@ from config import Config
 
 from env import AtariEnv
 from learner import eval_loop, inference_loop, train_loop
-from models import EmbeddingNetwork, R2D2Network, RNDNetwork
+from models import EmbeddingNetwork, R2D2Network, RNDPredictionNetwork
 from replay_buffer import replay_loop
+from shared_data import SharedData, SharedEnvData
 
 import os
 
-from shared_data import SharedData, SharedEnvData
-
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 
@@ -42,8 +42,13 @@ if __name__ == '__main__':
   infer_net.share_memory()
   infer_net.to(device)
 
-  RND_net = RNDNetwork(device, config)
+  RND_predict_net = RNDPredictionNetwork(device, config)
+  RND_predict_net.share_memory()
+  RND_predict_net.to(device)
+
   embedding_net = EmbeddingNetwork(device, config)
+  embedding_net.share_memory()
+  embedding_net.to(device)
 
   env_ids = np.arange(config.num_train_envs).reshape(config.num_actors, config.num_env_batches)
   log_ids = np.linspace(0, config.num_train_envs - 1, num=config.num_train_log, dtype=int)
@@ -69,7 +74,7 @@ if __name__ == '__main__':
 
   for i in range(config.num_inferences):
     actor_indexes = inference_actor_indexes[i]
-    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_net, RND_net, embedding_net, transition_queue, shared_env_datas[actor_indexes], device, config))
+    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_net, RND_predict_net, embedding_net, transition_queue, shared_env_datas[actor_indexes], device, config))
     p.start()
     processes.append(p)
 
@@ -80,11 +85,11 @@ if __name__ == '__main__':
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=eval_loop, args=(infer_net, RND_net, embedding_net, config, shared_env_datas[-1], device))
+  p = mp.Process(target=eval_loop, args=(infer_net, RND_predict_net, embedding_net, config, shared_env_datas[-1], device))
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=train_loop, args=(0, infer_net, RND_net, embedding_net, sample_queue, priority_queue, device, config))
+  p = mp.Process(target=train_loop, args=(0, infer_net, RND_predict_net, embedding_net, sample_queue, priority_queue, device, config))
   p.start()
   processes.append(p)
 

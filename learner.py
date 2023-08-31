@@ -4,19 +4,24 @@ from agent import R2D2Agent
 from batched_layer import BatchedLayer
 from config import Config
 from local_buffer import LocalBuffer
+from models import RNDNetwork
+from parallel_task import ParallelTask
 from reward_generator import RewardGenerator
 from shared_data import SharedEnvData
-from utils import AgentInputData, SelectActionOutput, to_agent_input, get_input_for_compute_loss, retrace_loss
+from utils import AgentInputData, SelectActionOutput, select_actions, to_agent_input, get_input_for_compute_loss, retrace_loss
 from torch.utils.tensorboard import SummaryWriter
 import zstandard as zstd
 
 
-def eval_loop(infer_net, RND_net, embedding_net, config: Config,
+def eval_loop(infer_net, RND_predict_net, embedding_net, config: Config,
               shared_env_data: SharedEnvData, device):
   shared_env_data.shared.get_shared_memory()
   batch_size = 1
+  ids = [0]
 
-  reward_generator = RewardGenerator(batch_size, config, RND_net, embedding_net, device)
+  RND_net = RNDNetwork(device, config, RND_predict_net)
+  reward_generator = RewardGenerator(batch_size, config)
+  parallel_task = ParallelTask()
 
   prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
   prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
@@ -32,10 +37,12 @@ def eval_loop(infer_net, RND_net, embedding_net, config: Config,
     cell_state=prev_cell_states,
   )
 
-  select_action_output: SelectActionOutput = infer_net.select_actions(
-    # seq 1 を追加
+  infer_output, future_reward = parallel_task.inference(
+    ids,
     to_agent_input(agent_input_data, device),
-    betas, batch_size)
+    reward_generator, infer_net, RND_net, embedding_net)
+  select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+
   shared_env_data.put_action(select_action_output.action[0])
 
   prev_actions = select_action_output.action
@@ -44,7 +51,7 @@ def eval_loop(infer_net, RND_net, embedding_net, config: Config,
 
   while True:
     # 内部報酬
-    intrinsic_rewards = reward_generator.get_intrinsic_reward([0], agent_input_data.state)
+    intrinsic_rewards = future_reward.result()
 
     _, env_output, betas, _ = shared_env_data.get_env_data()
     agent_input_data = AgentInputData(
@@ -56,24 +63,26 @@ def eval_loop(infer_net, RND_net, embedding_net, config: Config,
       hidden_state=prev_hidden_states,
       cell_state=prev_cell_states,
     )
-    select_action_output: SelectActionOutput = infer_net.select_actions(
-      # seq 1 を追加
+    infer_output, future_reward = parallel_task.inference(
+      ids,
       to_agent_input(agent_input_data, device),
-      betas, batch_size)
+      reward_generator, infer_net, RND_net, embedding_net)
+    select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+
     shared_env_data.put_action(select_action_output.action[0])
 
     if env_output.done:
       prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
       prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
-      reward_generator.reset([0])
+      reward_generator.reset(ids)
     else:
       prev_actions = select_action_output.action
       prev_hidden_states = select_action_output.hidden_state
       prev_cell_states = select_action_output.cell_state
 
 
-def inference_loop(actor_indexes, infer_net, RND_net, embedding_net, transition_queue, shared_env_datas, device, config: Config):
-  cctx = zstd.ZstdCompressor(write_content_size=config.transition_dtype.itemsize)
+def inference_loop(actor_indexes, infer_net, RND_predict_net, embedding_net, transition_queue, shared_env_datas, device, config: Config):
+  cctx = zstd.ZstdCompressor(threads=-1)
 
   # この推論プロセスで使う環境IDリストを得る
   env_ids = np.arange(
@@ -83,8 +92,11 @@ def inference_loop(actor_indexes, infer_net, RND_net, embedding_net, transition_
   first_env_id = env_ids[0]
 
   batch_size = len(env_ids)
+  ids = env_ids - first_env_id
 
-  reward_generator = RewardGenerator(batch_size, config, RND_net, embedding_net, device)
+  RND_net = RNDNetwork(device, config, RND_predict_net)
+  reward_generator = RewardGenerator(batch_size, config)
+  parallel_task = ParallelTask()
 
   for shared_env_data in shared_env_datas:
     shared_env_data.shared.get_shared_memory()
@@ -126,9 +138,11 @@ def inference_loop(actor_indexes, infer_net, RND_net, embedding_net, transition_
   # agent_input_data.hidden_state(t - 1),
   # agent_input_data.cell_state(t - 1),
 
-  select_action_output: SelectActionOutput = infer_net.select_actions(
+  infer_output, future_reward = parallel_task.inference(
+    ids,
     to_agent_input(agent_input_data, device),
-    betas, batch_size)
+    reward_generator, infer_net, RND_net, embedding_net)
+  select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
 
   # select_action_output.action(t)
   # select_action_output.qvalue(t)
@@ -150,31 +164,19 @@ def inference_loop(actor_indexes, infer_net, RND_net, embedding_net, transition_
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 
-    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, prev_betas, prev_gammas)
+    intrinsic_reward = future_reward.result()
+    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, prev_betas, prev_gammas, intrinsic_reward)
     if ret and transition_queue.qsize() < config.num_train_envs:
-      transitions, qvalues = ret
-      qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
-
-      input = get_input_for_compute_loss(transitions, config, device)
-
-      losses = retrace_loss(
-        input=input,
-        behaviour_qvalues=qvalues,
-        target_qvalues=qvalues,
-        config=config,
-        device=device)
-
-      losses = losses.cpu().detach().numpy().copy()
-
-      #: replay_bufferに遷移情報を蓄積
-      for loss, transition in zip(losses, transitions):
-        transition_queue.put((loss, cctx.compress(transition.tobytes())))
+      add_replay(ret, device, config, transition_queue, cctx)
 
     agent_input_data = local_buffer.get_agent_input()
 
-    select_action_output: SelectActionOutput = infer_net.select_actions(
+    infer_output, future_reward = parallel_task.inference(
+      ids,
       to_agent_input(agent_input_data, device),
-      betas, batch_size)
+      reward_generator, infer_net, RND_net, embedding_net)
+
+    select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
 
     # select_action_output.action(t + 1)
     # select_action_output.hidden_states(t + 1)
@@ -184,7 +186,27 @@ def inference_loop(actor_indexes, infer_net, RND_net, embedding_net, transition_
     batched_layer.send_actions(select_action_output.action)
 
 
-def train_loop(rank, infer_net, RND_net, embedding_net, sample_queue, priority_queue, device, config: Config):
+def add_replay(ret, device, config, transition_queue, cctx):
+  transitions, qvalues = ret
+  qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
+
+  input = get_input_for_compute_loss(transitions, config, device)
+
+  losses = retrace_loss(
+    input=input,
+    behaviour_qvalues=qvalues,
+    target_qvalues=qvalues,
+    config=config,
+    device=device)
+
+  losses = losses.cpu().detach().numpy().copy()
+
+  #: replay_bufferに遷移情報を蓄積
+  for loss, transition in zip(losses, transitions):
+    transition_queue.put((loss, cctx.compress(transition.tobytes())))
+
+
+def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, priority_queue, device, config: Config):
   if rank == 0:
     summary_writer = SummaryWriter("logs")
 
@@ -192,11 +214,18 @@ def train_loop(rank, infer_net, RND_net, embedding_net, sample_queue, priority_q
   agent.qnet.load_state_dict(infer_net.state_dict())
   agent.target_qnet.load_state_dict(infer_net.state_dict())
 
+  RND_net = RNDNetwork(device, config, RND_predict_net)
+
+  parallel_task = ParallelTask()
+
   steps = 0
 
   while True:
     #: リプレイバッファからミニバッチを取得
     indexes, transitions, is_weights = sample_queue.get()
+
+    # 非同期で訓練
+    parallel_task.train(transitions, RND_net, embedding_net)
 
     losses = agent.compute_loss(transitions)
 
@@ -206,8 +235,6 @@ def train_loop(rank, infer_net, RND_net, embedding_net, sample_queue, priority_q
     loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
 
     # 訓練
-    embedding_net.train(transitions)
-    RND_net.train(transitions)
     agent.train(loss)
 
     del transitions

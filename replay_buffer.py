@@ -75,7 +75,9 @@ class ReplayBuffer:
           if count > 10:
             raise ValueError("sample get errors.")
 
-      self._transitions[i] = np.frombuffer(self._dctx.decompress(bytes), dtype=self._config.transition_dtype)
+      self._transitions[i] = np.frombuffer(
+        self._dctx.decompress(bytes, max_output_size=self._config.transition_dtype.itemsize),
+        dtype=self._config.transition_dtype)
       self._indexes[i] = idx
       self._priorities[i] = p
 

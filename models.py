@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from config import Config
 
-from utils import AgentInput, SelectActionOutput, select_actions
+from utils import AgentInput
 import torch.nn.functional as F
 
 
@@ -51,6 +51,12 @@ class R2D2Network(nn.Module):
         nn.Linear(512, config.action_space),
     )
 
+  def set_weight(self, weight):
+    self.load_state_dict(weight)
+
+  def get_weight(self):
+    return self.state_dict()
+
   def forward(self, agent_input: AgentInput):
     batch_size = agent_input.state.shape[0]
     seq_len = agent_input.state.shape[1]
@@ -87,20 +93,6 @@ class R2D2Network(nn.Module):
     return (np.zeros((batch_size, self.config.lstm_num_layers, self.config.lstm_state_size), dtype=np.float32),
             np.zeros((batch_size, self.config.lstm_num_layers, self.config.lstm_state_size), dtype=np.float32))
 
-  def select_actions(self, agent_input, epsilons, batch_size):
-    qvalues, (hidden_state, cell_state) = self.forward(agent_input)
-    actions, policies = select_actions(qvalues, self.config.action_space, epsilons, self.device, batch_size)
-    qvalues = qvalues.squeeze(1).cpu().detach().numpy().copy()
-
-    return SelectActionOutput(
-      action=actions,
-      qvalue=qvalues,
-      policy=policies,
-      # num_layer, batch -> batch, num_layer
-      hidden_state=hidden_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
-      cell_state=cell_state.permute(1, 0, 2).cpu().detach().numpy().copy()
-    )
-
 
 class RNDPredictionNetwork(nn.Module):
 
@@ -129,6 +121,12 @@ class RNDPredictionNetwork(nn.Module):
         nn.Flatten(),
         nn.Linear(7 * 7 * 64, 128),
     )
+
+  def set_weight(self, weight):
+    self.feature.load_state_dict(weight)
+
+  def get_weight(self):
+    return self.feature.state_dict()
 
   def forward(self, x):
     return self.feature(x / 255.)
@@ -168,7 +166,7 @@ class RNDRandomNetwork(nn.Module):
 
 class RNDNetwork(nn.Module):
 
-  def __init__(self, device, config: Config, in_channels=4):
+  def __init__(self, device, config: Config, predict, in_channels=4):
     """
     Initialize Deep Q Network
 
@@ -180,9 +178,7 @@ class RNDNetwork(nn.Module):
     self.config = config
     self.device = device
 
-    self.predict = RNDPredictionNetwork(device, config)
-    self.predict.share_memory()
-    self.predict.to(device)
+    self.predict = predict
 
     self.random = RNDRandomNetwork(device, config)
     self.random.to(device)
@@ -192,10 +188,7 @@ class RNDNetwork(nn.Module):
     self.criterion = nn.MSELoss(reduction="none")
     self.optimizer = torch.optim.Adam(self.predict.parameters())
 
-  def forward(self, x):
-    rand_out = self.random(x)
-    predict_out = self.predict(x)
-
+  def get_loss(self, rand_out, predict_out):
     loss = self.criterion(rand_out, predict_out)
     return loss.mean(1)
 
@@ -240,8 +233,6 @@ class EmbeddingNetwork(nn.Module):
         nn.Linear(7 * 7 * 64, config.controllable_state_size),
         nn.ReLU()
     )
-    self.feature.share_memory()
-    self.feature.to(device)
 
     self.train_net = nn.Sequential(
         nn.Linear(64, 128),
@@ -253,6 +244,12 @@ class EmbeddingNetwork(nn.Module):
 
     self.criterion = nn.CrossEntropyLoss()
     self.optimizer = torch.optim.Adam(self.feature.parameters())
+
+  def set_weight(self, weight):
+    self.feature.load_state_dict(weight)
+
+  def get_weight(self):
+    return self.feature.state_dict()
 
   def forward(self, x):
     return self.feature(x / 255.)
