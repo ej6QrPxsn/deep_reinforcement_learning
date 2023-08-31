@@ -11,12 +11,12 @@ class R2D2Agent:
     self.device = device
     self.config = config
 
-    self.qnet = R2D2Network(self.device, self.config).to(self.device)
-    self.target_qnet = R2D2Network(self.device, self.config).to(self.device)
-    self._optimizer = optim.Adam(self.qnet.parameters(), lr=0.00048, eps=config.epsilon)
+    self.online_net = R2D2Network(self.device, self.config).to(self.device)
+    self.target_net = R2D2Network(self.device, self.config).to(self.device)
+    self._optimizer = optim.Adam(self.online_net.parameters(), lr=0.00048, eps=config.epsilon)
 
   def update_target(self):
-    self.target_qnet.load_state_dict(self.qnet.state_dict())
+    self.target_net.load_state_dict(self.online_net.state_dict())
 
   def get_agent_input_burn_in_from_transition(self, transition):
     prev_action = np.concatenate([
@@ -55,22 +55,19 @@ class R2D2Agent:
       prev_lstm_state=lstm_state
     )
 
-  def compute_loss(self, transitions):
-    # burn in
+  def get_online_output(self, transitions):
     model_input = self.get_agent_input_burn_in_from_transition(transitions)
-    _, qnet_lstm_state = self.qnet(model_input)
-    _, target_qnet_lstm_state = self.target_qnet(model_input)
+    _, online_lstm_state = self.online_net(model_input)
+    online_input = self.get_agent_input_from_transition(transitions, online_lstm_state)
+    online_output, _ = self.online_net(online_input)
+    return online_output
 
-    # 推論
-    qnet_input = self.get_agent_input_from_transition(transitions, qnet_lstm_state)
-    target_qnet_input = self.get_agent_input_from_transition(transitions, target_qnet_lstm_state)
-
-    qnet_out, _ = self.qnet(qnet_input)
-    target_qnet_out, _ = self.target_qnet(target_qnet_input)
-
-    input = get_input_for_compute_loss(transitions, self.config, self.device)
-
-    return retrace_loss(input, qnet_out, target_qnet_out, self.config, self.device)
+  def get_target_output(self, transitions):
+    model_input = self.get_agent_input_burn_in_from_transition(transitions)
+    _, target_lstm_state = self.target_net(model_input)
+    target_input = self.get_agent_input_from_transition(transitions, target_lstm_state)
+    target_output, _ = self.target_net(target_input)
+    return target_output
 
   def train(self, loss):
     self._optimizer.zero_grad()

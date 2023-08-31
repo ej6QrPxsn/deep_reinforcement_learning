@@ -211,8 +211,8 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     summary_writer = SummaryWriter("logs")
 
   agent = R2D2Agent(device, config)
-  agent.qnet.load_state_dict(infer_net.state_dict())
-  agent.target_qnet.load_state_dict(infer_net.state_dict())
+  agent.online_net.set_weight(infer_net.get_weight())
+  agent.update_target()
 
   RND_net = RNDNetwork(device, config, RND_predict_net)
 
@@ -227,12 +227,23 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     # 非同期で訓練
     parallel_task.train(transitions, RND_net, embedding_net)
 
-    losses = agent.compute_loss(transitions)
+    # 非同期でモデル出力値を取得
+    future_online_output, future_target_output = parallel_task.get_agent_output(transitions, agent)
+
+    # 損失計算用
+    loss_input = get_input_for_compute_loss(transitions, config, device)
+
+    # 損失計算
+    losses = retrace_loss(
+      loss_input,
+      future_online_output.result(),
+      future_target_output.result(),
+      config, device)
 
     priority_queue.put((indexes, losses.cpu().detach().numpy()))
 
     # seq sum -> batch mean
-    loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
+    loss = (torch.FloatTensor(is_weights, device=device) * losses).mean(0)
 
     # 訓練
     agent.train(loss)
@@ -242,7 +253,7 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     # 推論モデル更新
     if rank == 0:
       summary_writer.add_scalar('loss', loss, steps)
-      infer_net.load_state_dict(agent.qnet.state_dict())
+      infer_net.set_weight(agent.online_net.get_weight())
 
     steps += 1
 

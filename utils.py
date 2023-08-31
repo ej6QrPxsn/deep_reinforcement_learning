@@ -152,8 +152,8 @@ def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, con
   # tdのj+1のため、実質的なseqは-1
   seq_len = behaviour_qvalues.shape[1] - 1
 
-  prevent_division_by_zero_tensor = torch.tensor(config.epsilon).to(device)
-  one_tensor = torch.tensor(1).to(device)
+  prevent_division_by_zero_tensor = torch.tensor(config.epsilon, device=device)
+  one_tensor = torch.tensor(1, device=device)
 
   _, _, target_policies = get_epsilon_greedy_policy(target_qvalues, config.action_space, input.beta, device)
 
