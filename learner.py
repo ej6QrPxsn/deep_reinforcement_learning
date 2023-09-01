@@ -243,7 +243,7 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     priority_queue.put((indexes, losses.cpu().detach().numpy()))
 
     # seq sum -> batch mean
-    loss = (torch.FloatTensor(is_weights, device=device) * losses).mean(0)
+    loss = (torch.tensor(is_weights, device=device) * losses).mean(0)
 
     # 訓練
     agent.train(loss)
@@ -252,7 +252,7 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
 
     # 推論モデル更新
     if rank == 0:
-      summary_writer.add_scalar('loss', loss, steps)
+      summary_writer.add_scalar("loss", loss, steps)
       infer_net.set_weight(agent.online_net.get_weight())
 
     steps += 1

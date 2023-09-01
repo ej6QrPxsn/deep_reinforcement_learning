@@ -18,29 +18,29 @@ class Config:
 
     # 遷移データ定義
     self.transition_dtype = np.dtype([
-      ('state', 'u1', (self.seq_len + 1, *self.state_shape)),
-      ('action', 'u1', self.seq_len + 1),
-      ('extrinsic_reward', 'f4', self.seq_len + 1),
-      ('intrinsic_reward', 'f4', self.seq_len + 1),
-      ('done', '?', self.seq_len + 1),
-      ('policy', 'f4', self.seq_len + 1),
-      ('beta', 'f4', self.seq_len + 1),
-      ('gamma', 'f4', self.seq_len + 1),
-      ('prev_action', 'u1'),
-      ('prev_extrinsic_reward', 'f4'),
-      ('prev_intrinsic_reward', 'f4'),
-      ('prev_hidden_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
-      ('prev_cell_state', 'f4', (self.lstm_num_layers, self.lstm_state_size)),
+      ("state", "u1", (self.seq_len + 1, *self.state_shape)),
+      ("action", "u1", self.seq_len + 1),
+      ("extrinsic_reward", "f4", self.seq_len + 1),
+      ("intrinsic_reward", "f4", self.seq_len + 1),
+      ("done", "?", self.seq_len + 1),
+      ("policy", "f4", self.seq_len + 1),
+      ("beta", "f4", self.seq_len + 1),
+      ("gamma", "f4", self.seq_len + 1),
+      ("prev_action", "u1"),
+      ("prev_extrinsic_reward", "f4"),
+      ("prev_intrinsic_reward", "f4"),
+      ("prev_hidden_state", "f4", (self.lstm_num_layers, self.lstm_state_size)),
+      ("prev_cell_state", "f4", (self.lstm_num_layers, self.lstm_state_size)),
     ])
 
     # 環境データ定義
     self.env_dtype = np.dtype([
-      ('next_state', 'u1', state_shape),
-      ('reward', 'f4'),
-      ('done', '?'),
-      ('beta', 'f4'),
-      ('gamma', 'f4'),
-      ('action', 'u1'),
+      ("next_state", "u1", state_shape),
+      ("reward", "f4"),
+      ("done", "?"),
+      ("beta", "f4"),
+      ("gamma", "f4"),
+      ("action", "u1"),
     ])
 
   # データ共有

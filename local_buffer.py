@@ -10,30 +10,30 @@ class LocalBuffer:
     self.reward_generator = reward_generator
 
     work_transition_dtype = np.dtype([
-        ('state', 'u1', config.state_shape),
-        ('action', 'u1'),
-        ('extrinsic_reward', 'f4'),
-        ('intrinsic_reward', 'f4'),
-        ('done', '?'),
-        ('policy', 'f4'),
-        ('qvalue', 'f4', config.action_space),
-        ('beta', 'f4'),
-        ('gamma', 'f4'),
-        ('prev_action', 'u1'),
-        ('prev_extrinsic_reward', 'f4'),
-        ('prev_intrinsic_reward', 'f4'),
-        ('prev_hidden_state', 'f4', (config.lstm_num_layers, config.lstm_state_size)),
-        ('prev_cell_state', 'f4', (config.lstm_num_layers, config.lstm_state_size)),
+        ("state", "u1", config.state_shape),
+        ("action", "u1"),
+        ("extrinsic_reward", "f4"),
+        ("intrinsic_reward", "f4"),
+        ("done", "?"),
+        ("policy", "f4"),
+        ("qvalue", "f4", config.action_space),
+        ("beta", "f4"),
+        ("gamma", "f4"),
+        ("prev_action", "u1"),
+        ("prev_extrinsic_reward", "f4"),
+        ("prev_intrinsic_reward", "f4"),
+        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])
 
     agent_input_dtype = np.dtype([
-        ('state', 'u1', (1, *config.state_shape)),
-        ('prev_action', 'u1', (1,)),
-        ('prev_extrinsic_reward', 'f4', (1, 1)),
-        ('prev_intrinsic_reward', 'f4', (1, 1)),
-        ('beta', 'f4', (1, 1)),
-        ('prev_hidden_state', 'f4', (config.lstm_num_layers, config.lstm_state_size)),
-        ('prev_cell_state', 'f4', (config.lstm_num_layers, config.lstm_state_size)),
+        ("state", "u1", (1, *config.state_shape)),
+        ("prev_action", "u1", (1,)),
+        ("prev_extrinsic_reward", "f4", (1, 1)),
+        ("prev_intrinsic_reward", "f4", (1, 1)),
+        ("beta", "f4", (1, 1)),
+        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])
 
     # | replay_period | trace_length | 1 |

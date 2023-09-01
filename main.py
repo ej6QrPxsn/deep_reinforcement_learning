@@ -14,13 +14,16 @@ from shared_data import SharedData, SharedEnvData
 
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+# cudnnマルチスレッドバグ対応
+os.environ["TORCH_CUDNN_V8_API_DISABLED"] = "1"
+
+# tensorflowログ抑制
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   ################################################################################
-  mp.set_start_method('spawn')  # set start method to 'spawn' BEFORE instantiating the queue and the event
+  mp.set_start_method("spawn")  # set start method to "spawn" BEFORE instantiating the queue and the event
   ################################################################################
 
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
