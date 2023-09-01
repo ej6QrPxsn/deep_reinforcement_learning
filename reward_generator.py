@@ -137,7 +137,7 @@ class EpisodicNovelty():
 
   def reset(self, env_ids):
     self.episodic_memory.reset(env_ids)
-    self.prev_cal_data.count[env_ids] = 0
+    self.prev_cal_data.reset(env_ids)
 
   def get_reward(self, env_ids, controllable_state):
     self.episodic_memory.add(env_ids, controllable_state)
