@@ -18,7 +18,7 @@ class R2D2Network(nn.Module):
         n_actions (int): number of outputs
     """
     super(R2D2Network, self).__init__()
-    self.config = config
+    self.config: Config = config
     self.device = device
     self.feature = nn.Sequential(
         # (in - (kernel - 1) - 1) / stride + 1
@@ -36,7 +36,8 @@ class R2D2Network(nn.Module):
         nn.ReLU()
     )
 
-    self.lstm = nn.LSTM(input_size=512 + config.action_space + 3, hidden_size=config.lstm_state_size,
+    self.lstm = nn.LSTM(input_size=512 + config.action_space + 3,
+                        hidden_size=config.lstm_state_size,
                         num_layers=config.lstm_num_layers, batch_first=True)
 
     self.value = nn.Sequential(
@@ -164,47 +165,6 @@ class RNDRandomNetwork(nn.Module):
     return self.feature(x / 255.)
 
 
-class RNDNetwork(nn.Module):
-
-  def __init__(self, device, config: Config, predict, in_channels=4):
-    """
-    Initialize Deep Q Network
-
-    Args:
-        in_channels (int): number of input channels
-        n_actions (int): number of outputs
-    """
-    super(RNDNetwork, self).__init__()
-    self.config = config
-    self.device = device
-
-    self.predict = predict
-
-    self.random = RNDRandomNetwork(device, config)
-    self.random.to(device)
-
-    self.random.load_state_dict(self.predict.state_dict())
-
-    self.criterion = nn.MSELoss(reduction="none")
-    self.optimizer = torch.optim.Adam(self.predict.parameters())
-
-  def get_loss(self, rand_out, predict_out):
-    loss = self.criterion(rand_out, predict_out)
-    return loss.mean(1)
-
-  def train(self, transition):
-    state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period:].copy()).to(torch.float32).to(self.device)
-
-    rand_out = self.random(state.reshape(-1, *state.shape[2:]))
-    predict_out = self.predict(state.reshape(-1, *state.shape[2:]))
-
-    loss = self.criterion(rand_out, predict_out)
-
-    self.optimizer.zero_grad()
-    loss.mean().backward()
-    self.optimizer.step()
-
-
 class EmbeddingNetwork(nn.Module):
 
   def __init__(self, device, config: Config, in_channels=4):
@@ -234,17 +194,6 @@ class EmbeddingNetwork(nn.Module):
         nn.ReLU()
     )
 
-    self.train_net = nn.Sequential(
-        nn.Linear(64, 128),
-        nn.ReLU(),
-        nn.Linear(128, config.action_space),
-        nn.Softmax(dim=1)
-    )
-    self.train_net.to(device)
-
-    self.criterion = nn.CrossEntropyLoss()
-    self.optimizer = torch.optim.Adam(self.feature.parameters())
-
   def set_weight(self, weight):
     self.feature.load_state_dict(weight)
 
@@ -254,17 +203,35 @@ class EmbeddingNetwork(nn.Module):
   def forward(self, x):
     return self.feature(x / 255.)
 
-  def train(self, transition):
+
+class ActionPredictionNetwork(nn.Module):
+
+  def __init__(self, device, config: Config, embedding_net):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    super(ActionPredictionNetwork, self).__init__()
+    self.config = config
+    self.device = device
+    self.embedding = embedding_net
+
+    self.siamese = nn.Sequential(
+        nn.Linear(64, 128),
+        nn.ReLU(),
+        nn.Linear(128, config.action_space),
+        nn.Softmax(dim=1)
+    )
+    self.siamese.to(device)
+
+  def forward(self, transition):
     state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period - 1:-1].copy()).to(torch.float32).to(self.device)
     next_state = torch.from_numpy(transition["state"][:, -self.config.embedding_train_period:].copy()).to(torch.float32).to(self.device)
-    action = torch.from_numpy(transition["action"][:, -self.config.embedding_train_period - 1:-1].copy()).to(torch.int64).to(self.device)
 
-    ret1 = self.feature(state.reshape(-1, *state.shape[2:]))
-    ret2 = self.feature(next_state.reshape(-1, *next_state.shape[2:]))
-    out = self.train_net(torch.cat([ret1, ret2], dim=1))
+    ret1 = self.embedding(state.reshape(-1, *state.shape[2:]))
+    ret2 = self.embedding(next_state.reshape(-1, *next_state.shape[2:]))
 
-    loss = self.criterion(out, action.reshape(-1, *action.shape[2:]))
-
-    self.optimizer.zero_grad()
-    loss.backward()
-    self.optimizer.step()
+    return self.siamese(torch.cat([ret1, ret2], dim=1))

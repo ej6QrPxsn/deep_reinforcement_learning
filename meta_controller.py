@@ -60,9 +60,9 @@ class MetaController:
     if index == 0:
       return 0
     elif index == config.num_arms - 1:
-      return config.epsilon_beta
+      return config.intrinsic_reward_scale
     else:
-      return config.epsilon_beta * sigmoid(10 * (2 * index - (config.num_arms - 2)) / (config.num_arms - 2))
+      return config.intrinsic_reward_scale * sigmoid(10 * (2 * index - (config.num_arms - 2)) / (config.num_arms - 2))
 
   def _get_gamma(self, index):
     config = self._config

@@ -1,5 +1,6 @@
 
 from dataclasses import dataclass
+import traceback
 
 import numpy as np
 
@@ -37,7 +38,13 @@ def welford_update(prev_data, new_value, env_ids):
   """
   prev_data.count[env_ids] += 1
   delta = new_value - prev_data.mean[env_ids]
-  prev_data.mean[env_ids] += delta / prev_data.count[env_ids]
+  with np.errstate(divide='raise'):
+    try:
+      prev_data.mean[env_ids] += delta / prev_data.count[env_ids]
+    except Exception:
+      print(prev_data)
+      print(traceback.format_exc())
+
   delta2 = new_value - prev_data.mean[env_ids]
   prev_data.M2[env_ids] += delta * delta2
   return prev_data

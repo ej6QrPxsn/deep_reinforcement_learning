@@ -2,6 +2,7 @@ from numpy import random
 
 import numpy as np
 from config import Config
+from data_type import DataType
 from sum_tree import SumTree
 import zstandard as zstd
 
@@ -36,7 +37,12 @@ class ReplayBuffer:
     self._count = 0
     self._prev_count = 0
     self._config = config
-    self._transitions = np.empty(config.batch_size, dtype=self._config.transition_dtype)
+
+    data_type = DataType(config)
+
+    self._transition_dtype = data_type.transition_dtype
+
+    self._transitions = np.empty(config.batch_size, dtype=self._transition_dtype)
     self._indexes = np.empty(config.batch_size, dtype=np.int64)
     self._priorities = np.empty(config.batch_size, dtype=np.float32)
     self._dctx = zstd.ZstdDecompressor()
@@ -76,8 +82,8 @@ class ReplayBuffer:
             raise ValueError("sample get errors.")
 
       self._transitions[i] = np.frombuffer(
-        self._dctx.decompress(bytes, max_output_size=self._config.transition_dtype.itemsize),
-        dtype=self._config.transition_dtype)
+        self._dctx.decompress(bytes, max_output_size=self._transition_dtype.itemsize),
+        dtype=self._transition_dtype)
       self._indexes[i] = idx
       self._priorities[i] = p
 

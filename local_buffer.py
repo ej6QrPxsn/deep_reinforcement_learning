@@ -1,57 +1,31 @@
 import numpy as np
 from config import Config
+from data_type import DataType
 from env import EnvOutput
 from utils import AgentInputData, SelectActionOutput
 
 
 class LocalBuffer:
-  def __init__(self, batch_size, config: Config, reward_generator) -> None:
+  def __init__(self, batch_size, config: Config, reward_generator, data_type: DataType) -> None:
     self.config = config
     self.reward_generator = reward_generator
-
-    work_transition_dtype = np.dtype([
-        ("state", "u1", config.state_shape),
-        ("action", "u1"),
-        ("extrinsic_reward", "f4"),
-        ("intrinsic_reward", "f4"),
-        ("done", "?"),
-        ("policy", "f4"),
-        ("qvalue", "f4", config.action_space),
-        ("beta", "f4"),
-        ("gamma", "f4"),
-        ("prev_action", "u1"),
-        ("prev_extrinsic_reward", "f4"),
-        ("prev_intrinsic_reward", "f4"),
-        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-    ])
-
-    agent_input_dtype = np.dtype([
-        ("state", "u1", (1, *config.state_shape)),
-        ("prev_action", "u1", (1,)),
-        ("prev_extrinsic_reward", "f4", (1, 1)),
-        ("prev_intrinsic_reward", "f4", (1, 1)),
-        ("beta", "f4", (1, 1)),
-        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-    ])
 
     # | replay_period | trace_length | 1 |
     #                 |replay_period | trace_length | 1 |
     self.seq_len = config.seq_len + 1
     self.len = config.seq_len + config.trace_length + 1
 
-    self.work_transition = np.zeros((batch_size, self.len), dtype=work_transition_dtype)
+    self.work_transition = np.zeros((batch_size, self.len), dtype=data_type.work_transition_dtype)
     self.all_ids = np.arange(batch_size)
     self.indexes = np.zeros(batch_size, dtype=int)
 
-    self.transition = np.zeros(batch_size, dtype=config.transition_dtype)
+    self.transition = np.zeros(batch_size, dtype=data_type.transition_dtype)
 
     # 損失計算用
     self.loss_qvalues = np.empty((batch_size, self.seq_len, self.config.action_space))
 
     # 次の推論入力用
-    self.agent_input = np.zeros(batch_size, dtype=agent_input_dtype)
+    self.agent_input = np.zeros(batch_size, dtype=data_type.agent_input_dtype)
 
     self.base_indexes = np.zeros(batch_size, dtype=int)
 
@@ -74,8 +48,8 @@ class LocalBuffer:
       self.transition["intrinsic_reward"][i] = self.work_transition["intrinsic_reward"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
       self.transition["policy"][i] = self.work_transition["policy"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
       self.transition["done"][i] = self.work_transition["done"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
-      self.transition["beta"][i] = self.work_transition["beta"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
-      self.transition["gamma"][i] = self.work_transition["gamma"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
+      self.transition["beta"][i] = self.work_transition["beta"][id, self.base_indexes[id]]
+      self.transition["gamma"][i] = self.work_transition["gamma"][id, self.base_indexes[id]]
       self.transition["prev_action"][i] = self.work_transition["prev_action"][id, self.base_indexes[id]]
       self.transition["prev_extrinsic_reward"][i] = self.work_transition["prev_extrinsic_reward"][id, self.base_indexes[id]]
       self.transition["prev_intrinsic_reward"][i] = self.work_transition["prev_intrinsic_reward"][id, self.base_indexes[id]]
@@ -87,13 +61,16 @@ class LocalBuffer:
 
     return ret
 
-  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, betas, gammas, intrinsic_rewards):
+  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, prev_betas, prev_gammas, intrinsic_rewards):
     # prev_input.state(t),
     # prev_input.prev_action(t - 1),
     # prev_input.prev_extrinsic_reward(t - 1),
     # prev_input.prev_intrinsic_reward(t - 1),
     # prev_input.hidden_state(t - 1),
     # prev_input.cell_state(t - 1),
+
+    # prev_betas(t),
+    # prev_gammas(t),
 
     # select_action_output.action(t)
     # select_action_output.qvalue(t)
@@ -112,8 +89,8 @@ class LocalBuffer:
     self.work_transition["extrinsic_reward"][self.all_ids, self.indexes] = batched_env_output.reward
     self.work_transition["intrinsic_reward"][self.all_ids, self.indexes] = intrinsic_rewards
     self.work_transition["done"][self.all_ids, self.indexes] = batched_env_output.done
-    self.work_transition["beta"][self.all_ids, self.indexes] = betas
-    self.work_transition["gamma"][self.all_ids, self.indexes] = gammas
+    self.work_transition["beta"][self.all_ids, self.indexes] = prev_betas
+    self.work_transition["gamma"][self.all_ids, self.indexes] = prev_gammas
 
     self.work_transition["prev_action"][self.all_ids, self.indexes] = prev_input.prev_action[:, 0]
     self.work_transition["prev_extrinsic_reward"][self.all_ids, self.indexes] = prev_input.prev_extrinsic_reward[:, 0, 0]

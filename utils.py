@@ -44,7 +44,6 @@ class ComputeLossInput(NamedTuple):
   reward: torch.Tensor
   done: torch.Tensor
   policy: torch.Tensor
-  beta: torch.Tensor
   gamma: torch.Tensor
 
 
@@ -64,26 +63,23 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
 
 
 def get_input_for_compute_loss(transitions, config: Config, device) -> ComputeLossInput:
-  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + transitions["beta"][:, config.replay_period:] * transitions["intrinsic_reward"][:, config.replay_period:]
+  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + transitions["beta"][:, np.newaxis] * transitions["intrinsic_reward"][:, config.replay_period:]
   return ComputeLossInput(
       action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
       reward=torch.from_numpy(rewards.copy()).to(torch.float32).to(device),
       done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
       policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
-      beta=torch.from_numpy(transitions["beta"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
-      gamma=torch.from_numpy(transitions["gamma"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+      gamma=torch.from_numpy(transitions["gamma"][:, np.newaxis].copy()).to(torch.float32).to(device),
   )
 
 
-def h(x):
-  """Value function rescaling per R2D2 paper, table 2."""
-  eps = 1e-3
+# rescaling
+def h(x, eps):
   return torch.sign(x) * (torch.sqrt(torch.abs(x) + 1.) - 1.) + eps * x
 
 
-def h_1(x):
-  """See Proposition A.2 in paper "Observe and Look Further"."""
-  eps = 1e-3
+# inverse rescaling
+def h_1(x, eps):
   return torch.sign(x) * (((torch.sqrt(1. + 4 * eps * (torch.abs(x) + 1. + eps)) - 1.) / 2. * eps) - 1.)
 
 
@@ -103,15 +99,19 @@ def get_epsilon_greedy_policy(qvalues, n_actions, epsilon, device):
   return greedy_action, greedy_policy, epsilon_greedy_policy
 
 
-def select_actions(agent_output, n_actions, epsilons, device, num_envs):
-  tensor_epsilons = torch.from_numpy(epsilons).to(torch.float32).reshape(-1, 1, 1).to(device)
+def select_actions(agent_output, betas, device, config, batch_size):
+  tensor_epsilons = torch.empty((batch_size, 1, 1), dtype=torch.float32, device=device)
+  tensor_epsilons[:] = torch.tensor(betas).reshape(-1, 1, 1)
+
   qvalue, (hidden_state, cell_state) = agent_output
 
-  greedy_action, greedy_policy, epsilon_greedy_policy = get_epsilon_greedy_policy(qvalue, n_actions, tensor_epsilons, device)
-  random_actions = rng.integers(n_actions, size=num_envs)
-  probs = rng.random(num_envs)
+  # ポリシー取得
+  greedy_action, greedy_policy, epsilon_greedy_policy = get_epsilon_greedy_policy(qvalue, config.action_space, tensor_epsilons, device)
+  random_actions = rng.integers(config.action_space, size=batch_size)
+  probs = rng.random(batch_size)
 
-  actions = np.where(probs < epsilons,
+  # アクション取得
+  actions = np.where(probs < betas,
                      random_actions,
                      # batch, seq, value -> batch
                      greedy_action.reshape(-1).cpu().detach().numpy().copy())
@@ -127,45 +127,46 @@ def select_actions(agent_output, n_actions, epsilons, device, num_envs):
   )
 
 
-def get_td(rewards, dones, target_policies, target_qvalues, target_q, gammas):
-  return rewards[:, :-1] + gammas[:, 1:] * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
+def get_td(rewards, target_policies, target_qvalues, target_q, gammas, eps):
+  return rewards[:, :-1] + gammas * torch.sum(target_policies[:, 1:] * h_1(target_qvalues[:, 1:], eps), 2) - h_1(target_q[:, :-1], eps)
 
 
-def get_trace_coefficients(actions, past_greedy_policies, target_policies, prevent_division_by_zero_tensor, one_tensor, retrace_lambda):
+def get_trace_coefficients(actions, past_greedy_policies, target_policies, one_tensor, retrace_lambda):
   # ゼロ除算防止
-  no_zero_past_greedy_policies = torch.fmax(past_greedy_policies, prevent_division_by_zero_tensor)
-
+  past_greedy_policies = torch.where(past_greedy_policies == 0, 1, past_greedy_policies)
   # 重点サンプリングの割合を取得
-  policy_rates = target_policies.gather(2, actions) / no_zero_past_greedy_policies
+  policy_rates = target_policies.gather(2, actions) / past_greedy_policies
 
   # batch
   is_action_rate = retrace_lambda * torch.fmin(policy_rates, one_tensor)
   return is_action_rate.squeeze(-1)
 
 
-def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, n_steps):
-  ret = [torch.pow(gammas[:, j], j) * trace_coefficients[:, s + 1:j + 1].prod(1) * td[:, j] for j in range(s, n_steps)]
-  return target_q[:, s] + torch.stack(ret).sum(0)
+def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, seq_len, eps):
+  ret = [torch.pow(gammas[:, 0], j) * trace_coefficients[:, s + 1:j + 1].prod(1) * td[:, j] for j in range(s, seq_len)]
+  return h(h_1(target_q[:, s], eps) + torch.stack(ret).sum(0), eps)
 
 
 def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, config: Config, device):
   # tdのj+1のため、実質的なseqは-1
   seq_len = behaviour_qvalues.shape[1] - 1
 
-  prevent_division_by_zero_tensor = torch.tensor(config.epsilon, device=device)
   one_tensor = torch.tensor(1, device=device)
+  target_epsilon = torch.empty((behaviour_qvalues.shape[0], behaviour_qvalues.shape[1], 1), dtype=torch.float32, device=device)
+  target_epsilon[:] = config.target_epsilon
 
-  _, _, target_policies = get_epsilon_greedy_policy(target_qvalues, config.action_space, input.beta, device)
+  _, _, target_policies = get_epsilon_greedy_policy(target_qvalues, config.action_space, target_epsilon, device)
 
   behaviour_q = behaviour_qvalues.gather(2, input.action).squeeze(-1)
 
   # batch, seq
   target_q = target_qvalues.gather(2, input.action).squeeze(-1)
 
-  td = get_td(input.reward, input.done, target_policies, target_qvalues, target_q, input.gamma)
+  td = get_td(input.reward, target_policies, target_qvalues, target_q, input.gamma, config.rescaling_epsilon)
 
-  trace_coefficients = get_trace_coefficients(input.action, input.policy, target_policies, prevent_division_by_zero_tensor, one_tensor, config.retrace_lambda)
+  trace_coefficients = get_trace_coefficients(input.action, input.policy, target_policies, one_tensor, config.retrace_lambda)
 
-  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gamma, seq_len)) ** 2 for s in range(seq_len)])
+  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gamma, seq_len, config.rescaling_epsilon)) ** 2 for s in range(seq_len)])
+
   # seq, batch -> batch
   return losses.sum(0)

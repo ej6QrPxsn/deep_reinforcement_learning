@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import numpy as np
 
 
 @dataclass
@@ -10,38 +9,10 @@ class Config:
 
   action_space = None
   state_shape = None
-  transition_dtype = None
 
   def init(self, action_space, state_shape):
     self.action_space = action_space
     self.state_shape = state_shape
-
-    # 遷移データ定義
-    self.transition_dtype = np.dtype([
-      ("state", "u1", (self.seq_len + 1, *self.state_shape)),
-      ("action", "u1", self.seq_len + 1),
-      ("extrinsic_reward", "f4", self.seq_len + 1),
-      ("intrinsic_reward", "f4", self.seq_len + 1),
-      ("done", "?", self.seq_len + 1),
-      ("policy", "f4", self.seq_len + 1),
-      ("beta", "f4", self.seq_len + 1),
-      ("gamma", "f4", self.seq_len + 1),
-      ("prev_action", "u1"),
-      ("prev_extrinsic_reward", "f4"),
-      ("prev_intrinsic_reward", "f4"),
-      ("prev_hidden_state", "f4", (self.lstm_num_layers, self.lstm_state_size)),
-      ("prev_cell_state", "f4", (self.lstm_num_layers, self.lstm_state_size)),
-    ])
-
-    # 環境データ定義
-    self.env_dtype = np.dtype([
-      ("next_state", "u1", state_shape),
-      ("reward", "f4"),
-      ("done", "?"),
-      ("beta", "f4"),
-      ("gamma", "f4"),
-      ("action", "u1"),
-    ])
 
   # データ共有
   shared_env_name = "shared_env_name"
@@ -50,8 +21,8 @@ class Config:
   # バッチ数
   batch_size = 64
 
-  replay_period = 32
-  trace_length = 32
+  replay_period = 40
+  trace_length = 80
 
   # シーケンス数
   seq_len = replay_period + trace_length
@@ -73,7 +44,7 @@ class Config:
   bandit_window_size = 90
   bandit_UCB_beta = 1
   bandit_epsilon = 0.5
-  epsilon_beta = 1 - 1e-6
+  intrinsic_reward_scale = 0.3
   gamma_min = 0.99
   gamma_max = 0.997
 
@@ -83,11 +54,20 @@ class Config:
   replay_buffer_add_print_size = 500
   max_trainsition_queue_size = 8
 
-  # 損失
-  eval_epsilon = 1e-3
-  epsilon = 1e-3
+  # 最適化
+  adam_epsilon = 0.0001
+  adam_betas = (0.9, 0.999)
+  adam_clip_norm = 40
+  r2d2_learning_rate = 0.0001
+  action_prediction_learning_rate = 0.0005
+  rnd_learning_rate = 0.0005
+
+  # ε-greedy
+  eval_epsilon = 0.01
+  target_epsilon = 0.01
+
+  # 損失計算
   retrace_lambda = 0.95
-  target_update_period = 2500
   rescaling_epsilon = 1e-3
 
   # LSTM
@@ -108,3 +88,4 @@ class Config:
   RND_train_period = 5
 
   num_train_log = 4
+  target_update_period = 2500

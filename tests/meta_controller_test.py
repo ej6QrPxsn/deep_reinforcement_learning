@@ -41,7 +41,7 @@ def test_get_arm_index():
 
   config.num_env_batches = 3
   config.num_arms = 32
-  config.epsilon_beta = 1 - 1e-6
+  config.intrinsic_reward_scale = 0.3
   # 乱数分岐に行かない設定
   config.bandit_epsilon = 0
 

@@ -30,8 +30,6 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
     ),
     betas, gammas)
 
-  episode_counts += 1
-
   while True:
     total_steps += 1
 
@@ -45,13 +43,13 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
       betas, gammas = meta_controller.update(indexes, episode_counts, episode_rewards)
-      episode_counts[indexes] += 1
       for index in indexes:
         env_id = ids[index]
         if env_id in log_ids:
           summary_writer.add_scalar(f"reward/{env_id}", episode_rewards[index], total_steps)
           summary_writer.add_scalar(f"beta/{env_id}", betas[index], episode_counts[index])
 
+      episode_counts[indexes] += 1
       episode_rewards[indexes] = 0
 
 

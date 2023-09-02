@@ -1,10 +1,10 @@
 import numpy as np
 import torch
-from agent import R2D2Agent
+from agent import ActionPredictionAgent, R2D2Agent, RNDAgent
 from batched_layer import BatchedLayer
 from config import Config
+from data_type import DataType
 from local_buffer import LocalBuffer
-from models import RNDNetwork
 from parallel_task import ParallelTask
 from reward_generator import RewardGenerator
 from shared_data import SharedEnvData
@@ -19,7 +19,7 @@ def eval_loop(infer_net, RND_predict_net, embedding_net, config: Config,
   batch_size = 1
   ids = [0]
 
-  RND_net = RNDNetwork(device, config, RND_predict_net)
+  rnd_agent = RNDAgent(device, config, RND_predict_net)
   reward_generator = RewardGenerator(batch_size, config)
   parallel_task = ParallelTask()
 
@@ -40,8 +40,8 @@ def eval_loop(infer_net, RND_predict_net, embedding_net, config: Config,
   infer_output, future_reward = parallel_task.inference(
     ids,
     to_agent_input(agent_input_data, device),
-    reward_generator, infer_net, RND_net, embedding_net)
-  select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+    reward_generator, infer_net, rnd_agent, embedding_net)
+  select_action_output: SelectActionOutput = select_actions(infer_output, config.eval_epsilon, device, config, batch_size)
 
   shared_env_data.put_action(select_action_output.action[0])
 
@@ -66,8 +66,8 @@ def eval_loop(infer_net, RND_predict_net, embedding_net, config: Config,
     infer_output, future_reward = parallel_task.inference(
       ids,
       to_agent_input(agent_input_data, device),
-      reward_generator, infer_net, RND_net, embedding_net)
-    select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+      reward_generator, infer_net, rnd_agent, embedding_net)
+    select_action_output: SelectActionOutput = select_actions(infer_output, config.eval_epsilon, device, config, batch_size)
 
     shared_env_data.put_action(select_action_output.action[0])
 
@@ -94,14 +94,15 @@ def inference_loop(actor_indexes, infer_net, RND_predict_net, embedding_net, tra
   batch_size = len(env_ids)
   ids = env_ids - first_env_id
 
-  RND_net = RNDNetwork(device, config, RND_predict_net)
+  rnd_agent = RNDAgent(device, config, RND_predict_net)
   reward_generator = RewardGenerator(batch_size, config)
   parallel_task = ParallelTask()
 
   for shared_env_data in shared_env_datas:
     shared_env_data.shared.get_shared_memory()
 
-  local_buffer = LocalBuffer(batch_size, config, reward_generator)
+  data_type = DataType(config)
+  local_buffer = LocalBuffer(batch_size, config, reward_generator, data_type)
   batched_layer = BatchedLayer(env_ids, shared_env_datas, config)
 
   prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
@@ -141,8 +142,8 @@ def inference_loop(actor_indexes, infer_net, RND_predict_net, embedding_net, tra
   infer_output, future_reward = parallel_task.inference(
     ids,
     to_agent_input(agent_input_data, device),
-    reward_generator, infer_net, RND_net, embedding_net)
-  select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+    reward_generator, infer_net, rnd_agent, embedding_net)
+  select_action_output: SelectActionOutput = select_actions(infer_output, betas, device, config, batch_size)
 
   # select_action_output.action(t)
   # select_action_output.qvalue(t)
@@ -174,9 +175,9 @@ def inference_loop(actor_indexes, infer_net, RND_predict_net, embedding_net, tra
     infer_output, future_reward = parallel_task.inference(
       ids,
       to_agent_input(agent_input_data, device),
-      reward_generator, infer_net, RND_net, embedding_net)
+      reward_generator, infer_net, rnd_agent, embedding_net)
 
-    select_action_output: SelectActionOutput = select_actions(infer_output, config.action_space, betas, device, batch_size)
+    select_action_output: SelectActionOutput = select_actions(infer_output, betas, device, config, batch_size)
 
     # select_action_output.action(t + 1)
     # select_action_output.hidden_states(t + 1)
@@ -210,11 +211,13 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
   if rank == 0:
     summary_writer = SummaryWriter("logs")
 
-  agent = R2D2Agent(device, config)
-  agent.online_net.set_weight(infer_net.get_weight())
-  agent.update_target()
+  r2d2_agent = R2D2Agent(device, config)
+  r2d2_agent.online_net.set_weight(infer_net.get_weight())
+  r2d2_agent.update_target()
 
-  RND_net = RNDNetwork(device, config, RND_predict_net)
+  rnd_agent = RNDAgent(device, config, RND_predict_net)
+
+  action_prediction_agent = ActionPredictionAgent(device, config, embedding_net)
 
   parallel_task = ParallelTask()
 
@@ -225,10 +228,10 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     indexes, transitions, is_weights = sample_queue.get()
 
     # 非同期で訓練
-    parallel_task.train(transitions, RND_net, embedding_net)
+    parallel_task.train(transitions, rnd_agent, action_prediction_agent)
 
     # 非同期でモデル出力値を取得
-    future_online_output, future_target_output = parallel_task.get_agent_output(transitions, agent)
+    future_online_output, future_target_output = parallel_task.get_agent_output(transitions, r2d2_agent)
 
     # 損失計算用
     loss_input = get_input_for_compute_loss(transitions, config, device)
@@ -246,17 +249,17 @@ def train_loop(rank, infer_net, RND_predict_net, embedding_net, sample_queue, pr
     loss = (torch.tensor(is_weights, device=device) * losses).mean(0)
 
     # 訓練
-    agent.train(loss)
+    r2d2_agent.train(loss)
 
     del transitions
 
     # 推論モデル更新
     if rank == 0:
       summary_writer.add_scalar("loss", loss, steps)
-      infer_net.set_weight(agent.online_net.get_weight())
+      infer_net.set_weight(r2d2_agent.online_net.get_weight())
 
     steps += 1
 
     #: target-QネットワークをQネットワークと同期
     if steps % config.target_update_period == 0:
-      agent.update_target()
+      r2d2_agent.update_target()

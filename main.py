@@ -5,6 +5,7 @@ import torch
 import multiprocessing as mp
 from actor import actor_loop, tester_loop
 from config import Config
+from data_type import DataType
 
 from env import AtariEnv
 from learner import eval_loop, inference_loop, train_loop
@@ -35,6 +36,7 @@ if __name__ == "__main__":
   config = Config()
   env = AtariEnv(config.env_name)
   config.init(env.action_space, env.reset().shape)
+  data_type = DataType(config)
 
   processes = []
   p = mp.Process(target=replay_loop, args=(transition_queue, sample_queue, priority_queue, config))
@@ -59,7 +61,7 @@ if __name__ == "__main__":
   shared_data = SharedData(
     config.shared_env_name,
     (config.num_train_envs + config.num_eval_envs, ),
-    config.env_dtype
+    data_type.env_dtype
   )
   shared_data.create_shared_memory()
 
