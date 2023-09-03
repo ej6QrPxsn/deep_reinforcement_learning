@@ -22,7 +22,7 @@ class Config:
   batch_size = 64
 
   replay_period = 40
-  trace_length = 80
+  trace_length = 40
 
   # シーケンス数
   seq_len = replay_period + trace_length

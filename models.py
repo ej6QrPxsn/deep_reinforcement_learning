@@ -36,7 +36,7 @@ class R2D2Network(nn.Module):
         nn.ReLU()
     )
 
-    self.lstm = nn.LSTM(input_size=512 + config.action_space + 3,
+    self.lstm = nn.LSTM(input_size=512 + config.action_space + config.num_arms + 2,
                         hidden_size=config.lstm_state_size,
                         num_layers=config.lstm_num_layers, batch_first=True)
 
@@ -67,6 +67,7 @@ class R2D2Network(nn.Module):
     feature_out = self.feature(feature_in / 255.)
 
     prev_action_one_hot = F.one_hot(agent_input.prev_action, num_classes=self.config.action_space)
+    beta_one_hot = F.one_hot(agent_input.arm_index, num_classes=self.config.num_arms)
 
     # batch, (burn_in + )seq, conv outputs + reward + actions
     lstm_in = torch.cat((
@@ -75,7 +76,7 @@ class R2D2Network(nn.Module):
       prev_action_one_hot,
       agent_input.prev_extrinsic_reward,
       agent_input.prev_intrinsic_reward,
-      agent_input.beta,
+      beta_one_hot,
     ), 2)
 
     lstm_out, lstm_states = self.lstm(lstm_in, agent_input.prev_lstm_state)

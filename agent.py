@@ -36,15 +36,15 @@ class R2D2Agent:
       transition["intrinsic_reward"][:, :self.config.replay_period - 1]
     ], axis=1)
 
-    beta = torch.empty((*prev_action.shape, 1), device=self.device)
-    beta[:] = torch.from_numpy(transition["beta"][:, np.newaxis, np.newaxis].copy())
+    arm_index = torch.empty(prev_action.shape, dtype=int, device=self.device)
+    arm_index[:] = torch.from_numpy(transition["arm_index"][:, np.newaxis].copy())
 
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, :self.config.replay_period].copy()).to(torch.float32).to(self.device),
       prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(self.device),
       prev_extrinsic_reward=torch.from_numpy(prev_extrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self.device),
       prev_intrinsic_reward=torch.from_numpy(prev_intrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self.device),
-      beta=beta,
+      arm_index=arm_index,
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(transition["prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(self.device),
@@ -53,15 +53,15 @@ class R2D2Agent:
     )
 
   def get_agent_input_from_transition(self, transition, lstm_state):
-    beta = torch.empty((*transition["action"][:, self.config.replay_period - 1:-1].shape, 1), device=self.device)
-    beta[:] = torch.from_numpy(transition["beta"][:, np.newaxis, np.newaxis].copy())
+    arm_index = torch.empty(transition["action"][:, self.config.replay_period - 1:-1].shape, dtype=int, device=self.device)
+    arm_index[:] = torch.from_numpy(transition["arm_index"][:, np.newaxis].copy())
 
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, self.config.replay_period:].copy()).to(torch.float32).to(self.device),
       prev_action=torch.from_numpy(transition["action"][:, self.config.replay_period - 1:-1].copy()).to(torch.int64).to(self.device),
       prev_extrinsic_reward=torch.from_numpy(transition["extrinsic_reward"][:, self.config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
       prev_intrinsic_reward=torch.from_numpy(transition["intrinsic_reward"][:, self.config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self.device),
-      beta=beta,
+      arm_index=arm_index,
       prev_lstm_state=lstm_state
     )
 
@@ -84,7 +84,7 @@ class R2D2Agent:
     loss.backward()
 
     # 勾配クリップ
-    torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
+    # torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
     # 勾配反映
     self._optimizer.step()
 
@@ -130,7 +130,7 @@ class RNDAgent:
     self.optimizer.zero_grad()
     loss.mean().backward()
     # 勾配クリップ
-    torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
+    # torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
     self.optimizer.step()
 
 
@@ -156,5 +156,5 @@ class ActionPredictionAgent:
     self.optimizer.zero_grad()
     loss.backward()
     # 勾配クリップ
-    torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
+    # torch.nn.utils.clip_grad_norm_(self.online_net.parameters(), max_norm=self.config.adam_clip_norm)
     self.optimizer.step()

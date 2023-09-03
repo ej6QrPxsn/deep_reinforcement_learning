@@ -1,50 +1,9 @@
-from typing import NamedTuple, Tuple
 import numpy as np
 import torch
 from numpy import random
 from config import Config
+from data_type import AgentInput, AgentInputData, ComputeLossInput, SelectActionOutput
 rng = random.default_rng()  # or random.default_rng(0)
-
-
-class AgentInputData(NamedTuple):
-  state: np.ndarray
-  prev_action: np.ndarray
-  prev_extrinsic_reward: np.ndarray
-  prev_intrinsic_reward: np.ndarray
-  beta: np.ndarray
-  hidden_state: np.ndarray
-  cell_state: np.ndarray
-
-
-class SelectActionOutput(NamedTuple):
-  action: np.ndarray
-  qvalue: np.ndarray
-  policy: np.ndarray
-  hidden_state: np.ndarray
-  cell_state: np.ndarray
-
-
-class AgentInput(NamedTuple):
-  state: torch.Tensor
-  prev_action: torch.Tensor
-  prev_extrinsic_reward: torch.Tensor
-  prev_intrinsic_reward: torch.Tensor
-  beta: torch.Tensor
-  prev_lstm_state: Tuple[torch.Tensor, torch.Tensor]
-
-
-class AgentOutput(NamedTuple):
-  qvalue: torch.Tensor
-  hidden_state: torch.Tensor
-  cell_state: torch.Tensor
-
-
-class ComputeLossInput(NamedTuple):
-  action: torch.Tensor
-  reward: torch.Tensor
-  done: torch.Tensor
-  policy: torch.Tensor
-  gamma: torch.Tensor
 
 
 def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
@@ -53,7 +12,7 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
       prev_action=torch.from_numpy(agent_input_data.prev_action.copy()).to(torch.int64).to(device),
       prev_extrinsic_reward=torch.from_numpy(agent_input_data.prev_extrinsic_reward.copy()).to(torch.float32).to(device),
       prev_intrinsic_reward=torch.from_numpy(agent_input_data.prev_intrinsic_reward.copy()).to(torch.float32).to(device),
-      beta=torch.from_numpy(agent_input_data.beta.copy()).to(torch.float32).to(device),
+      arm_index=torch.from_numpy(agent_input_data.arm_index.copy()).to(torch.int64).to(device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
@@ -62,15 +21,43 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   )
 
 
-def get_input_for_compute_loss(transitions, config: Config, device) -> ComputeLossInput:
-  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + transitions["beta"][:, np.newaxis] * transitions["intrinsic_reward"][:, config.replay_period:]
+def get_input_for_compute_loss(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
+  beta = beta_table[transitions["arm_index"]]
+  gamma = gamma_table[transitions["arm_index"]]
+  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + beta[:, np.newaxis] * transitions["intrinsic_reward"][:, config.replay_period:]
   return ComputeLossInput(
       action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
       reward=torch.from_numpy(rewards.copy()).to(torch.float32).to(device),
       done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
       policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
-      gamma=torch.from_numpy(transitions["gamma"][:, np.newaxis].copy()).to(torch.float32).to(device),
+      gamma=torch.from_numpy(gamma[:, np.newaxis].copy()).to(torch.float32).to(device),
   )
+
+
+def sigmoid(x):
+  return 1 / (1 + np.exp(-x))
+
+
+def get_beta_table(config):
+  table = np.empty(config.num_arms)
+  for i in range(config.num_arms):
+    if i == 0:
+      table[i] = 0
+    elif i == config.num_arms - 1:
+      table[i] = config.intrinsic_reward_scale
+    else:
+      table[i] = config.intrinsic_reward_scale * sigmoid(10 * (2 * i - (config.num_arms - 2)) / (config.num_arms - 2))
+
+  return table
+
+
+def get_gamma_table(config):
+  table = np.empty(config.num_arms)
+  for i in range(config.num_arms):
+    gmax = (config.num_arms - 1 - i) * np.log(1 - config.gamma_max)
+    gmin = i * np.log(1 - config.gamma_min)
+    table[i] = 1 - np.exp((gmax + gmin) / (config.num_arms - 1))
+  return table
 
 
 # rescaling
@@ -127,8 +114,8 @@ def select_actions(agent_output, betas, device, config, batch_size):
   )
 
 
-def get_td(rewards, target_policies, target_qvalues, target_q, gammas, eps):
-  return rewards[:, :-1] + gammas * torch.sum(target_policies[:, 1:] * h_1(target_qvalues[:, 1:], eps), 2) - h_1(target_q[:, :-1], eps)
+def get_td(rewards, target_policies, target_qvalues, target_q, gammas):
+  return rewards[:, :-1] + gammas * torch.sum(target_policies[:, 1:] * target_qvalues[:, 1:], 2) - target_q[:, :-1]
 
 
 def get_trace_coefficients(actions, past_greedy_policies, target_policies, one_tensor, retrace_lambda):
@@ -142,9 +129,9 @@ def get_trace_coefficients(actions, past_greedy_policies, target_policies, one_t
   return is_action_rate.squeeze(-1)
 
 
-def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, seq_len, eps):
+def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, seq_len):
   ret = [torch.pow(gammas[:, 0], j) * trace_coefficients[:, s + 1:j + 1].prod(1) * td[:, j] for j in range(s, seq_len)]
-  return h(h_1(target_q[:, s], eps) + torch.stack(ret).sum(0), eps)
+  return target_q[:, s] + torch.stack(ret).sum(0)
 
 
 def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, config: Config, device):
@@ -162,11 +149,11 @@ def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, con
   # batch, seq
   target_q = target_qvalues.gather(2, input.action).squeeze(-1)
 
-  td = get_td(input.reward, target_policies, target_qvalues, target_q, input.gamma, config.rescaling_epsilon)
+  td = get_td(input.reward, target_policies, target_qvalues, target_q, input.gamma)
 
   trace_coefficients = get_trace_coefficients(input.action, input.policy, target_policies, one_tensor, config.retrace_lambda)
 
-  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gamma, seq_len, config.rescaling_epsilon)) ** 2 for s in range(seq_len)])
+  losses = torch.stack([(behaviour_q[:, s] - get_retrace_operator(s, trace_coefficients, td, target_q, input.gamma, seq_len)) ** 2 for s in range(seq_len)])
 
   # seq, batch -> batch
   return losses.sum(0)

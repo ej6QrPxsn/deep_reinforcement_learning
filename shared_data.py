@@ -3,6 +3,7 @@ import os
 import numpy as np
 import multiprocessing as mp
 from multiprocessing import shared_memory
+from data_type import MetaInfo
 
 from env import EnvOutput
 
@@ -45,22 +46,11 @@ class SharedEnvData():
     self.shared = shared_data
     self.ids = ids
 
-  def put_states(self, states, beta):
-    self.shared.data["next_state"][self.ids] = states
-    self.shared.data["beta"][self.ids] = beta
-    self.env_event.set()
-
-  def get_states(self):
-    self.env_event.wait()
-    self.env_event.clear()
-    return self.ids, self.shared.data["next_state"][self.ids], self.shared.data["beta"][self.ids]
-
-  def put_env_data(self, env_output: EnvOutput, beta, gamma):
+  def put_env_data(self, env_output: EnvOutput, meta_info: MetaInfo):
     self.shared.data["next_state"][self.ids] = env_output.next_state
     self.shared.data["reward"][self.ids] = env_output.reward
     self.shared.data["done"][self.ids] = env_output.done
-    self.shared.data["beta"][self.ids] = beta
-    self.shared.data["gamma"][self.ids] = gamma
+    self.shared.data["arm_index"][self.ids] = meta_info.arm_index
     self.env_event.set()
 
   def get_env_data(self):
@@ -70,12 +60,13 @@ class SharedEnvData():
       reward=self.shared.data["reward"][self.ids],
       done=self.shared.data["done"][self.ids],
     )
-    betas = self.shared.data["beta"][self.ids]
-    gammas = self.shared.data["gamma"][self.ids]
+    meta_info = MetaInfo(
+        arm_index=self.shared.data["arm_index"][self.ids],
+    )
 
     self.env_event.clear()
 
-    return self.ids, env_output, betas, gammas
+    return self.ids, env_output, meta_info
 
   def put_action(self, action):
     self.shared.data["action"][self.ids] = action

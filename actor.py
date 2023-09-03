@@ -2,10 +2,12 @@
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from config import Config
+from data_type import MetaInfo
 
 from env import AtariEnv, BatchedEnv, EnvOutput
 from meta_controller import MetaController
 from shared_data import SharedEnvData
+from utils import get_beta_table
 
 
 def actor_loop(ids, log_ids, share_env_data, config: Config):
@@ -17,7 +19,9 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
   episode_rewards = np.zeros(config.num_env_batches)
   episode_counts = np.zeros(config.num_env_batches, dtype=int)
   meta_controller = MetaController(config)
-  betas, gammas = meta_controller.reset()
+  meta_info = meta_controller.reset()
+
+  beta_table = get_beta_table(config)
 
   env = BatchedEnv(config)
   states = env.reset()
@@ -28,7 +32,7 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
       reward=np.zeros(config.num_env_batches),
       done=np.zeros(config.num_env_batches, dtype=bool),
     ),
-    betas, gammas)
+    meta_info)
 
   while True:
     total_steps += 1
@@ -38,16 +42,16 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
     env_output = env.step(actions)
     episode_rewards += env_output.reward
 
-    share_env_data.put_env_data(env_output, betas, gammas)
+    share_env_data.put_env_data(env_output, meta_info)
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
-      betas, gammas = meta_controller.update(indexes, episode_counts, episode_rewards)
+      meta_info = meta_controller.update(indexes, episode_counts, episode_rewards)
       for index in indexes:
         env_id = ids[index]
         if env_id in log_ids:
           summary_writer.add_scalar(f"reward/{env_id}", episode_rewards[index], total_steps)
-          summary_writer.add_scalar(f"beta/{env_id}", betas[index], episode_counts[index])
+          summary_writer.add_scalar(f"beta/{env_id}", beta_table[meta_info.arm_index[index]], episode_counts[index])
 
       episode_counts[indexes] += 1
       episode_rewards[indexes] = 0
@@ -63,8 +67,10 @@ def tester_loop(share_env_data: SharedEnvData, config: Config):
   env = AtariEnv(config.env_name)
   states = env.reset()
 
-  beta = np.zeros((1, 1))
-  beta[:] = config.eval_epsilon
+  meta_info = MetaInfo(
+      # テスト用でリプレイには入らないため、適当なインデクスを指定
+      arm_index=0
+    )
 
   share_env_data.put_env_data(
     EnvOutput(
@@ -72,7 +78,8 @@ def tester_loop(share_env_data: SharedEnvData, config: Config):
       reward=0,
       done=False,
     ),
-    beta, None)
+    meta_info
+  )
 
   while True:
     total_steps += 1
@@ -82,7 +89,7 @@ def tester_loop(share_env_data: SharedEnvData, config: Config):
     env_output = env.step(action[0])
     episode_reward += env_output.reward
 
-    share_env_data.put_env_data(env_output, beta, None)
+    share_env_data.put_env_data(env_output, meta_info)
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:

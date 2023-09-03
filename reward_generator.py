@@ -43,7 +43,7 @@ def welford_update(prev_data, new_value, env_ids):
       prev_data.mean[env_ids] += delta / prev_data.count[env_ids]
     except Exception:
       print(prev_data)
-      print(traceback.format_exc())
+      traceback.print_stack()
 
   delta2 = new_value - prev_data.mean[env_ids]
   prev_data.M2[env_ids] += delta * delta2

@@ -1,5 +1,52 @@
 
+from typing import NamedTuple, Tuple
 import numpy as np
+import torch
+
+
+class MetaInfo(NamedTuple):
+  arm_index: np.ndarray
+
+
+class AgentInputData(NamedTuple):
+  state: np.ndarray
+  prev_action: np.ndarray
+  prev_extrinsic_reward: np.ndarray
+  prev_intrinsic_reward: np.ndarray
+  arm_index: np.ndarray
+  hidden_state: np.ndarray
+  cell_state: np.ndarray
+
+
+class SelectActionOutput(NamedTuple):
+  action: np.ndarray
+  qvalue: np.ndarray
+  policy: np.ndarray
+  hidden_state: np.ndarray
+  cell_state: np.ndarray
+
+
+class AgentInput(NamedTuple):
+  state: torch.Tensor
+  prev_action: torch.Tensor
+  prev_extrinsic_reward: torch.Tensor
+  prev_intrinsic_reward: torch.Tensor
+  arm_index: torch.Tensor
+  prev_lstm_state: Tuple[torch.Tensor, torch.Tensor]
+
+
+class AgentOutput(NamedTuple):
+  qvalue: torch.Tensor
+  hidden_state: torch.Tensor
+  cell_state: torch.Tensor
+
+
+class ComputeLossInput(NamedTuple):
+  action: torch.Tensor
+  reward: torch.Tensor
+  done: torch.Tensor
+  policy: torch.Tensor
+  gamma: torch.Tensor
 
 
 class DataType():
@@ -13,8 +60,7 @@ class DataType():
         ("done", "?"),
         ("policy", "f4"),
         ("qvalue", "f4", config.action_space),
-        ("beta", "f4"),
-        ("gamma", "f4"),
+        ("arm_index", "u1"),
         ("prev_action", "u1"),
         ("prev_extrinsic_reward", "f4"),
         ("prev_intrinsic_reward", "f4"),
@@ -30,8 +76,7 @@ class DataType():
       ("intrinsic_reward", "f4", config.seq_len + 1),
       ("done", "?", config.seq_len + 1),
       ("policy", "f4", config.seq_len + 1),
-      ("beta", "f4"),
-      ("gamma", "f4"),
+      ("arm_index", "u1"),
       ("prev_action", "u1"),
       ("prev_extrinsic_reward", "f4"),
       ("prev_intrinsic_reward", "f4"),
@@ -44,8 +89,7 @@ class DataType():
       ("next_state", "u1", config.state_shape),
       ("reward", "f4"),
       ("done", "?"),
-      ("beta", "f4"),
-      ("gamma", "f4"),
+      ("arm_index", "u1"),
       ("action", "u1"),
     ])
 
@@ -54,7 +98,7 @@ class DataType():
         ("prev_action", "u1", (1,)),
         ("prev_extrinsic_reward", "f4", (1, 1)),
         ("prev_intrinsic_reward", "f4", (1, 1)),
-        ("beta", "f4", (1, 1)),
+        ("arm_index", "u1", (1,)),
         ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
         ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])

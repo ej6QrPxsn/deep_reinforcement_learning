@@ -1,6 +1,6 @@
 import numpy as np
 from config import Config
-from data_type import DataType
+from data_type import DataType, MetaInfo
 from env import EnvOutput
 from utils import AgentInputData, SelectActionOutput
 
@@ -35,7 +35,7 @@ class LocalBuffer:
         self.agent_input["prev_action"].copy(),
         self.agent_input["prev_extrinsic_reward"].copy(),
         self.agent_input["prev_intrinsic_reward"].copy(),
-        self.agent_input["beta"].copy(),
+        self.agent_input["arm_index"].copy(),
         self.agent_input["prev_hidden_state"].copy(),
         self.agent_input["prev_cell_state"].copy(),
     )
@@ -48,8 +48,7 @@ class LocalBuffer:
       self.transition["intrinsic_reward"][i] = self.work_transition["intrinsic_reward"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
       self.transition["policy"][i] = self.work_transition["policy"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
       self.transition["done"][i] = self.work_transition["done"][id, self.indexes[id] - self.seq_len:self.indexes[id]]
-      self.transition["beta"][i] = self.work_transition["beta"][id, self.base_indexes[id]]
-      self.transition["gamma"][i] = self.work_transition["gamma"][id, self.base_indexes[id]]
+      self.transition["arm_index"][i] = self.work_transition["arm_index"][id, self.base_indexes[id]]
       self.transition["prev_action"][i] = self.work_transition["prev_action"][id, self.base_indexes[id]]
       self.transition["prev_extrinsic_reward"][i] = self.work_transition["prev_extrinsic_reward"][id, self.base_indexes[id]]
       self.transition["prev_intrinsic_reward"][i] = self.work_transition["prev_intrinsic_reward"][id, self.base_indexes[id]]
@@ -61,7 +60,7 @@ class LocalBuffer:
 
     return ret
 
-  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, prev_betas, prev_gammas, intrinsic_rewards):
+  def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput, batched_env_output: EnvOutput, meta_info: MetaInfo, prev_arm_index, intrinsic_rewards):
     # prev_input.state(t),
     # prev_input.prev_action(t - 1),
     # prev_input.prev_extrinsic_reward(t - 1),
@@ -69,8 +68,7 @@ class LocalBuffer:
     # prev_input.hidden_state(t - 1),
     # prev_input.cell_state(t - 1),
 
-    # prev_betas(t),
-    # prev_gammas(t),
+    # prev_arm_index(t),
 
     # select_action_output.action(t)
     # select_action_output.qvalue(t)
@@ -82,6 +80,8 @@ class LocalBuffer:
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 
+    # meta_info.arm_index(t + 1),
+
     self.work_transition["state"][self.all_ids, self.indexes] = prev_input.state[self.all_ids, 0]
     self.work_transition["action"][self.all_ids, self.indexes] = select_action_output.action
     self.work_transition["qvalue"][self.all_ids, self.indexes] = select_action_output.qvalue
@@ -89,8 +89,7 @@ class LocalBuffer:
     self.work_transition["extrinsic_reward"][self.all_ids, self.indexes] = batched_env_output.reward
     self.work_transition["intrinsic_reward"][self.all_ids, self.indexes] = intrinsic_rewards
     self.work_transition["done"][self.all_ids, self.indexes] = batched_env_output.done
-    self.work_transition["beta"][self.all_ids, self.indexes] = prev_betas
-    self.work_transition["gamma"][self.all_ids, self.indexes] = prev_gammas
+    self.work_transition["arm_index"][self.all_ids, self.indexes] = prev_arm_index
 
     self.work_transition["prev_action"][self.all_ids, self.indexes] = prev_input.prev_action[:, 0]
     self.work_transition["prev_extrinsic_reward"][self.all_ids, self.indexes] = prev_input.prev_extrinsic_reward[:, 0, 0]
@@ -104,6 +103,7 @@ class LocalBuffer:
     self.agent_input["prev_action"][self.all_ids, 0] = select_action_output.action
     self.agent_input["prev_extrinsic_reward"][self.all_ids, 0, 0] = batched_env_output.reward
     self.agent_input["prev_intrinsic_reward"][self.all_ids, 0, 0] = intrinsic_rewards
+    self.agent_input["arm_index"][self.all_ids, 0] = meta_info.arm_index
     self.agent_input["prev_hidden_state"] = select_action_output.hidden_state
     self.agent_input["prev_cell_state"] = select_action_output.cell_state
 
@@ -150,6 +150,7 @@ class LocalBuffer:
       self.agent_input["prev_action"][done_ids] = 0
       self.agent_input["prev_extrinsic_reward"][done_ids] = 0
       self.agent_input["prev_intrinsic_reward"][done_ids] = 0
+      self.agent_input["arm_index"][done_ids] = 0
       self.agent_input["prev_hidden_state"][done_ids] = 0
       self.agent_input["prev_cell_state"][done_ids] = 0
 

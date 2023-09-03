@@ -3,6 +3,7 @@
 import numpy as np
 
 from config import Config
+from data_type import MetaInfo
 from env import EnvOutput
 
 
@@ -15,34 +16,23 @@ class BatchedLayer:
     self.rewards = np.zeros(self.batch_size)
     self.dones = np.zeros(self.batch_size, dtype=bool)
     self.indexes = np.arange(self.batch_size).reshape(-1, config.num_env_batches)
-    self.betas = np.zeros(self.batch_size)
-    self.gammas = np.zeros(self.batch_size)
+    self.arm_indexes = np.zeros(self.batch_size, dtype=int)
 
   def send_actions(self, actions):
     for indexes, shared_env_data in zip(self.indexes, self.shared_env_datas):
       shared_env_data.put_action(actions[indexes])
 
-  def wait_states(self, first_env_id):
-    for shared_env_data in self.shared_env_datas:
-      ids, states, betas = shared_env_data.get_states()
-      indexes = ids - first_env_id
-      self.next_states[indexes] = states
-      self.betas[indexes] = betas
-
-    return self.next_states, self.betas
-
   def wait_env_outputs(self, first_env_id):
     for shared_env_data in self.shared_env_datas:
-      ids, env_outputs, betas, gammas = shared_env_data.get_env_data()
+      ids, env_outputs, meta_info = shared_env_data.get_env_data()
       indexes = ids - first_env_id
       self.next_states[indexes] = env_outputs.next_state
       self.rewards[indexes] = env_outputs.reward
       self.dones[indexes] = env_outputs.done
-      self.betas[indexes] = betas
-      self.gammas[indexes] = gammas
+      self.arm_indexes[indexes] = meta_info.arm_index
 
     return EnvOutput(
         next_state=self.next_states,
         reward=self.rewards,
         done=self.dones,
-    ), self.betas, self.gammas
+    ), MetaInfo(arm_index=self.arm_indexes)
