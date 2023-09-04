@@ -147,10 +147,11 @@ class LocalBuffer:
       self.indexes[done_ids] = 0
       self.base_indexes[done_ids] = 0
 
+      # 次の推論入力用
+      # state, arm_indexはエピソード終了時はリセット後の値が入っているため、ここでは設定しない
       self.agent_input["prev_action"][done_ids] = 0
       self.agent_input["prev_extrinsic_reward"][done_ids] = 0
       self.agent_input["prev_intrinsic_reward"][done_ids] = 0
-      self.agent_input["arm_index"][done_ids] = 0
       self.agent_input["prev_hidden_state"][done_ids] = 0
       self.agent_input["prev_cell_state"][done_ids] = 0
 
