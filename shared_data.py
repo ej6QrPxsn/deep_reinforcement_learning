@@ -45,45 +45,33 @@ class SharedEnvData():
     self.shared = shared_data
     self.ids = ids
 
-  def put_states(self, states, beta):
-    self.shared.data['next_state'][self.ids] = states
-    self.shared.data['beta'][self.ids] = beta
-    self.env_event.set()
-
-  def get_states(self):
-    self.env_event.wait()
-    self.env_event.clear()
-    return self.ids, self.shared.data['next_state'][self.ids], self.shared.data['beta'][self.ids]
-
-  def put_env_data(self, env_output: EnvOutput, beta, gamma):
-    self.shared.data['next_state'][self.ids] = env_output.next_state
-    self.shared.data['reward'][self.ids] = env_output.reward
-    self.shared.data['done'][self.ids] = env_output.done
-    self.shared.data['beta'][self.ids] = beta
-    self.shared.data['gamma'][self.ids] = gamma
+  def put_env_data(self, env_output: EnvOutput, policy_index):
+    self.shared.data["next_state"][self.ids] = env_output.next_state
+    self.shared.data["reward"][self.ids] = env_output.reward
+    self.shared.data["done"][self.ids] = env_output.done
+    self.shared.data["policy_index"][self.ids] = policy_index
     self.env_event.set()
 
   def get_env_data(self):
     self.env_event.wait()
     env_output = EnvOutput(
-      next_state=self.shared.data['next_state'][self.ids],
-      reward=self.shared.data['reward'][self.ids],
-      done=self.shared.data['done'][self.ids],
+      next_state=self.shared.data["next_state"][self.ids],
+      reward=self.shared.data["reward"][self.ids],
+      done=self.shared.data["done"][self.ids],
     )
-    betas = self.shared.data['beta'][self.ids]
-    gammas = self.shared.data['gamma'][self.ids]
+    policy_index = self.shared.data["policy_index"][self.ids]
 
     self.env_event.clear()
 
-    return self.ids, env_output, betas, gammas
+    return self.ids, env_output, policy_index
 
   def put_action(self, action):
-    self.shared.data['action'][self.ids] = action
+    self.shared.data["action"][self.ids] = action
     self.action_event.set()
 
   def get_action(self):
     self.action_event.wait()
-    action = self.shared.data['action'][self.ids]
+    action = self.shared.data["action"][self.ids]
     self.action_event.clear()
 
     return action

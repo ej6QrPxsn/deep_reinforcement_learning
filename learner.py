@@ -1,48 +1,81 @@
 import numpy as np
 import torch
-from agent import DQNAgent
+from agent import R2D2Agent
 from batched_layer import BatchedLayer
 from config import Config
+from data_type import AgentInputData, DataType, SelectActionOutput
 from local_buffer import LocalBuffer
+from reward_generator import RewardGenerator
 from shared_data import SharedEnvData
-from utils import AgentInputData, SelectActionOutput, to_agent_input, get_input_for_compute_loss, retrace_loss
 from torch.utils.tensorboard import SummaryWriter
 import zstandard as zstd
 
+from utils import get_beta_table, get_gamma_table, get_input_for_compute_loss, retrace_loss, to_agent_input
 
-def eval_loop(infer_model, shared_env_data: SharedEnvData, device):
+
+def eval_loop(infer_net, embedding_net, config: Config,
+              shared_env_data: SharedEnvData, device):
   shared_env_data.shared.get_shared_memory()
   batch_size = 1
 
-  prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+  reward_generator = RewardGenerator(batch_size, config, embedding_net, device)
+
+  prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
   prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
 
+  _, env_output, policy_indexes = shared_env_data.get_env_data()
+  agent_input_data = AgentInputData(
+    state=np.expand_dims(env_output.next_state, axis=1),
+    prev_action=prev_actions.reshape(batch_size, 1),
+    prev_extrinsic_reward=env_output.reward.reshape(batch_size, 1, 1),
+    prev_intrinsic_reward=env_output.reward.reshape(batch_size, 1, 1),
+    policy_index=policy_indexes.reshape(batch_size, 1),
+    hidden_state=prev_hidden_states,
+    cell_state=prev_cell_states,
+  )
+
+  select_action_output: SelectActionOutput = infer_net.select_actions(
+    to_agent_input(agent_input_data, device),
+    config.eval_epsilon, batch_size)
+  shared_env_data.put_action(select_action_output.action[0])
+
+  prev_actions = select_action_output.action
+  prev_hidden_states = select_action_output.hidden_state
+  prev_cell_states = select_action_output.cell_state
+
   while True:
-    _, env_output, betas, _ = shared_env_data.get_env_data()
+    # 内部報酬
+    intrinsic_rewards = reward_generator.get_intrinsic_reward([0], agent_input_data.state)
+
+    _, env_output, policy_indexes = shared_env_data.get_env_data()
     agent_input_data = AgentInputData(
       state=np.expand_dims(env_output.next_state, axis=1),
       prev_action=prev_actions.reshape(batch_size, 1),
-      prev_reward=env_output.reward.reshape(batch_size, 1, 1),
+      prev_extrinsic_reward=env_output.reward.reshape(batch_size, 1, 1),
+      prev_intrinsic_reward=intrinsic_rewards.reshape(batch_size, 1, 1),
+      policy_index=policy_indexes.reshape(batch_size, 1),
       hidden_state=prev_hidden_states,
       cell_state=prev_cell_states,
     )
-    select_action_output: SelectActionOutput = infer_model.select_actions(
+    select_action_output: SelectActionOutput = infer_net.select_actions(
       # seq 1 を追加
       to_agent_input(agent_input_data, device),
-      betas, batch_size)
+      config.eval_epsilon, batch_size)
     shared_env_data.put_action(select_action_output.action[0])
 
     if env_output.done:
-      prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+      prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
       prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
+      reward_generator.reset([0])
     else:
       prev_actions = select_action_output.action
       prev_hidden_states = select_action_output.hidden_state
       prev_cell_states = select_action_output.cell_state
 
 
-def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_datas, device, config: Config):
-  cctx = zstd.ZstdCompressor(write_content_size=config.transition_dtype.itemsize)
+def inference_loop(actor_indexes, infer_net, embedding_net, transition_queue, shared_env_datas, device, config: Config):
+  data_type = DataType(config)
+  cctx = zstd.ZstdCompressor(write_content_size=data_type.transition_dtype.itemsize)
 
   # この推論プロセスで使う環境IDリストを得る
   env_ids = np.arange(
@@ -53,22 +86,25 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
 
   batch_size = len(env_ids)
 
+  reward_generator = RewardGenerator(batch_size, config, embedding_net, device)
+
+  beta_table = get_beta_table(config)
+  gamma_table = get_gamma_table(config)
+
   for shared_env_data in shared_env_datas:
     shared_env_data.shared.get_shared_memory()
 
-  local_buffer = LocalBuffer(batch_size, config)
+  local_buffer = LocalBuffer(batch_size, config, reward_generator)
   batched_layer = BatchedLayer(env_ids, shared_env_datas, config)
 
-  prev_hidden_states, prev_cell_states = infer_model.initial_state(batch_size)
+  prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
   prev_actions = np.zeros(batch_size, dtype=np.uint8)
-  prev_betas = np.zeros(batch_size, dtype=np.float32)
-  prev_gammas = np.zeros(batch_size, dtype=np.float32)
+  prev_policy_indexes = np.zeros(batch_size, dtype=int)
 
-  batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
+  batched_env_output, policy_indexes = batched_layer.wait_env_outputs(first_env_id)
 
   # batched_env_output.next_state(t),
-  # betas(t),
-  # gammas(t),
+  # policy_indexes(t),
   # batched_env_output.reward(t - 1),
   # batched_env_output.done(t - 1)
 
@@ -79,20 +115,23 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   agent_input_data = AgentInputData(
     state=np.expand_dims(batched_env_output.next_state, axis=1),
     prev_action=prev_actions.reshape(batch_size, 1),
-    prev_reward=batched_env_output.reward.reshape(batch_size, 1, 1),
+    prev_extrinsic_reward=batched_env_output.reward.reshape(batch_size, 1, 1),
+    prev_intrinsic_reward=batched_env_output.reward.reshape(batch_size, 1, 1),
+    policy_index=policy_indexes.reshape(batch_size, 1),
     hidden_state=prev_hidden_states,
     cell_state=prev_cell_states,
   )
 
   # agent_input_data.state(t),
   # agent_input_data.prev_action(t - 1),
-  # agent_input_data.prev_reward(t - 1),
+  # agent_input_data.prev_extrinsic_reward(t - 1),
+  # agent_input_data.prev_intrinsic_reward(t - 1),
   # agent_input_data.hidden_state(t - 1),
   # agent_input_data.cell_state(t - 1),
 
-  select_action_output: SelectActionOutput = infer_model.select_actions(
+  select_action_output: SelectActionOutput = infer_net.select_actions(
     to_agent_input(agent_input_data, device),
-    betas, batch_size)
+    beta_table[policy_indexes], batch_size)
 
   # select_action_output.action(t)
   # select_action_output.qvalue(t)
@@ -103,23 +142,20 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
   batched_layer.send_actions(select_action_output.action)
 
   while True:
-    prev_betas = betas
-    prev_gammas = gammas
-    batched_env_output, betas, gammas = batched_layer.wait_env_outputs(first_env_id)
+    prev_policy_indexes[:] = policy_indexes
+    batched_env_output, policy_indexes = batched_layer.wait_env_outputs(first_env_id)
     # batched_env_output.next_state(t + 1),
-    # betas(t + 1),
-    # gammas(t + 1),
-    # prev_betas(t),
-    # prev_gammas(t),
+    # policy_indexes(t + 1),
+    # prev_policy_indexes(t),
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 
-    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, prev_betas, prev_gammas)
+    ret = local_buffer.add(agent_input_data, select_action_output, batched_env_output, prev_policy_indexes, policy_indexes)
     if ret and transition_queue.qsize() < config.num_train_envs:
       transitions, qvalues = ret
       qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
 
-      input = get_input_for_compute_loss(transitions, config, device)
+      input = get_input_for_compute_loss(transitions, config, device, beta_table, gamma_table)
 
       losses = retrace_loss(
         input=input,
@@ -136,9 +172,9 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
 
     agent_input_data = local_buffer.get_agent_input()
 
-    select_action_output: SelectActionOutput = infer_model.select_actions(
+    select_action_output: SelectActionOutput = infer_net.select_actions(
       to_agent_input(agent_input_data, device),
-      betas, batch_size)
+      beta_table[policy_indexes], batch_size)
 
     # select_action_output.action(t + 1)
     # select_action_output.hidden_states(t + 1)
@@ -148,13 +184,16 @@ def inference_loop(actor_indexes, infer_model, transition_queue, shared_env_data
     batched_layer.send_actions(select_action_output.action)
 
 
-def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: Config):
+def train_loop(rank, infer_net, embedding_net, sample_queue, priority_queue, device, config: Config):
   if rank == 0:
     summary_writer = SummaryWriter("logs")
 
-  agent = DQNAgent(device, config)
-  agent.qnet.load_state_dict(infer_model.state_dict())
-  agent.update_target()
+  agent = R2D2Agent(device, config)
+  agent.qnet.load_state_dict(infer_net.state_dict())
+  agent.target_qnet.load_state_dict(infer_net.state_dict())
+
+  beta_table = get_beta_table(config)
+  gamma_table = get_gamma_table(config)
 
   steps = 0
 
@@ -162,21 +201,23 @@ def train_loop(rank, infer_model, sample_queue, priority_queue, device, config: 
     #: リプレイバッファからミニバッチを取得
     indexes, transitions, is_weights = sample_queue.get()
 
-    losses = agent.compute_loss(transitions)
+    losses = agent.compute_loss(transitions, beta_table, gamma_table)
 
     priority_queue.put((indexes, losses.cpu().detach().numpy()))
 
     # seq sum -> batch mean
     loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
 
+    # 訓練
+    embedding_net.train(transitions)
     agent.train(loss)
 
     del transitions
 
     # 推論モデル更新
     if rank == 0:
-      summary_writer.add_scalar('loss', loss, steps)
-      infer_model.load_state_dict(agent.qnet.state_dict())
+      summary_writer.add_scalar("loss", loss, steps)
+      infer_net.load_state_dict(agent.qnet.state_dict())
 
     steps += 1
 
