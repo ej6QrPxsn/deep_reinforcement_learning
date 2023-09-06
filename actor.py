@@ -18,7 +18,8 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
   episode_rewards = np.zeros(config.num_env_batches)
   episode_counts = np.zeros(config.num_env_batches, dtype=int)
   meta_controller = MetaController(config)
-  policy_index = meta_controller.reset()
+  # policy_index = meta_controller.reset()
+  policy_index = ids % config.num_arms
 
   env = BatchedEnv(config)
   states = env.reset()
@@ -47,7 +48,7 @@ def actor_loop(ids, log_ids, share_env_data, config: Config):
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
-      policy_index = meta_controller.update(indexes, episode_counts, episode_rewards)
+      # policy_index = meta_controller.update(indexes, episode_counts, episode_rewards)
       episode_counts[indexes] += 1
       for index in indexes:
         env_id = ids[index]

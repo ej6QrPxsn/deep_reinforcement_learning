@@ -35,7 +35,7 @@ class MetaController:
 
   def _get_arm_index(self, ids, steps):
     batch_size = len(ids)
-    indexes = np.where(steps[ids] < self._config.num_arms, self._config.num_arms - steps[ids] - 1,
+    indexes = np.where(steps[ids] < self._config.num_arms, steps[ids],
                        np.where(self._rng.random(batch_size) >= self._config.bandit_epsilon,
                                 self._get_max_arg_index(ids, steps),
                                 self._rng.integers(0, self._config.num_arms - 1, size=batch_size))

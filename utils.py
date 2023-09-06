@@ -22,14 +22,19 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
 
 
 def get_input_for_compute_loss(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
-  beta = beta_table[transitions["policy_index"]]
+  beta = beta_table[transitions["policy_index"]][:, np.newaxis]
   gamma = gamma_table[transitions["policy_index"]]
-  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + beta[:, np.newaxis] * transitions["intrinsic_reward"][:, config.replay_period:]
+  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + beta * transitions["intrinsic_reward"][:, config.replay_period:]
+
+  target_epsilon = torch.empty(transitions["action"][:, config.replay_period:].shape, dtype=torch.float32, device=device)
+  target_epsilon[:] = torch.from_numpy(beta.copy())
+
   return ComputeLossInput(
       action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
       reward=torch.from_numpy(rewards.copy()).to(torch.float32).to(device),
       done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
       policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
+      beta=target_epsilon,
       gamma=torch.from_numpy(gamma[:, np.newaxis].copy()).to(torch.float32).to(device),
   )
 

@@ -42,6 +42,7 @@ class ComputeLossInput(NamedTuple):
   reward: torch.Tensor
   done: torch.Tensor
   policy: torch.Tensor
+  beta: torch.Tensor
   gamma: torch.Tensor
 
 
