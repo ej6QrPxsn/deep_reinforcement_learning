@@ -55,22 +55,51 @@ def welford_update(prev_data, new_value, env_ids):
 def welford_finalize(prev_data, env_ids):
   mean = prev_data.mean[env_ids]
   variance = prev_data.M2[env_ids] / (prev_data.count[env_ids]).astype(float)
-  count = np.where(prev_data.count[env_ids] == 1, [2] * len(env_ids), prev_data.count[env_ids])
+  count = np.where(prev_data.count[env_ids] == 1, 2, prev_data.count[env_ids])
   sample_variance = prev_data.M2[env_ids] / (count - 1).astype(float)
   return mean, variance, sample_variance
 
 
 class RewardGenerator():
-  def __init__(self, batch_size, config: Config, embedding_net, device) -> None:
+  def __init__(self, batch_size, config: Config, RND_net, embedding_net, device) -> None:
     self.device = device
+    self.life_long_novelty = LifeLongNovelty(batch_size, config, RND_net)
     self.episodic_novelty = EpisodicNovelty(batch_size, config, embedding_net)
+    self.clipping_factor = config.RND_clipping_factor
 
   def get_intrinsic_reward(self, ids, values):
     values = torch.from_numpy(values.squeeze(1).copy()).to(torch.float32).to(self.device)
-    return self.episodic_novelty.get_episodic_intrinsic_reward(ids, values)
+    alpha = self.life_long_novelty.get_alpha(ids, values)
+    rewards = self.episodic_novelty.get_episodic_intrinsic_reward(ids, values)
+
+    one = np.ones(alpha.shape)
+    clipping_factor = np.empty(alpha.shape)
+    clipping_factor[:] = self.clipping_factor
+
+    intrinsic_rewards = rewards * np.min([np.max([alpha, one], axis=0), clipping_factor], axis=0)
+    return intrinsic_rewards
 
   def reset(self, ids):
     self.episodic_novelty.reset(ids)
+
+
+class LifeLongNovelty():
+  def __init__(self, batch_size, config: Config, RND_net) -> None:
+    self.prev_cal_data = WelfordData(
+      count=np.zeros(batch_size, dtype=np.int32),
+      mean=np.zeros(batch_size, dtype=np.float32),
+      M2=np.zeros(batch_size, dtype=np.float32),
+    )
+    self.RND_net = RND_net
+
+  def get_alpha(self, env_ids, values):
+    err = self.RND_net.get_loss(values).cpu().detach().numpy()
+
+    self.prev_cal_data = welford_update(self.prev_cal_data, err, env_ids)
+    mean, variance, sample_variance = welford_finalize(self.prev_cal_data, env_ids)
+    variance = np.where(variance == 0, 1, variance)
+    alpha = 1 + (err - mean) / np.sqrt(variance)
+    return alpha
 
 
 class EpisodicMemory():

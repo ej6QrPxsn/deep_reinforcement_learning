@@ -53,8 +53,16 @@ class Config:
   replay_buffer_add_print_size = 500
   max_trainsition_queue_size = 8
 
+  # 最適化
+  adam_r2d2_learning_rate = 0.0001
+  adam_rnd_learning_rate = 0.0005
+  adam_action_prediction_learning_rate = 0.0005
+  adam_action_prediction_ls_weight = 0.00001
+  adam_epsilon = 0.0001
+  adam_beta1 = 0.9
+  adam_beta2 = 0.999
+
   # 損失
-  adam_epsilon = 1e-3
   eval_epsilon = 0.01
   target_epsilon = 0.01
   retrace_lambda = 0.95

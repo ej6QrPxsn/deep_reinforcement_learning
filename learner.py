@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from agent import R2D2Agent
+from agent import ActionPredictionNetwork, R2D2Agent, RNDNetwork
 from batched_layer import BatchedLayer
 from config import Config
 from data_type import AgentInputData, DataType, SelectActionOutput
@@ -13,12 +13,14 @@ import zstandard as zstd
 from utils import get_beta_table, get_gamma_table, get_input_for_compute_loss, retrace_loss, to_agent_input
 
 
-def eval_loop(infer_net, embedding_net, config: Config,
+def eval_loop(infer_net, predict_net, embedding_net, config: Config,
               shared_env_data: SharedEnvData, device):
   shared_env_data.shared.get_shared_memory()
   batch_size = 1
 
-  reward_generator = RewardGenerator(batch_size, config, embedding_net, device)
+  RND_net = RNDNetwork(device, config, predict_net)
+
+  reward_generator = RewardGenerator(batch_size, config, RND_net, embedding_net, device)
 
   prev_hidden_states, prev_cell_states = infer_net.initial_state(batch_size)
   prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
@@ -73,9 +75,11 @@ def eval_loop(infer_net, embedding_net, config: Config,
       prev_cell_states = select_action_output.cell_state
 
 
-def inference_loop(actor_indexes, infer_net, embedding_net, transition_queue, shared_env_datas, device, config: Config):
+def inference_loop(actor_indexes, infer_net, predict_net, embedding_net, transition_queue, shared_env_datas, device, config: Config):
   data_type = DataType(config)
   cctx = zstd.ZstdCompressor(write_content_size=data_type.transition_dtype.itemsize)
+
+  RND_net = RNDNetwork(device, config, predict_net)
 
   # この推論プロセスで使う環境IDリストを得る
   env_ids = np.arange(
@@ -86,7 +90,7 @@ def inference_loop(actor_indexes, infer_net, embedding_net, transition_queue, sh
 
   batch_size = len(env_ids)
 
-  reward_generator = RewardGenerator(batch_size, config, embedding_net, device)
+  reward_generator = RewardGenerator(batch_size, config, RND_net, embedding_net, device)
 
   beta_table = get_beta_table(config)
   gamma_table = get_gamma_table(config)
@@ -184,13 +188,16 @@ def inference_loop(actor_indexes, infer_net, embedding_net, transition_queue, sh
     batched_layer.send_actions(select_action_output.action)
 
 
-def train_loop(rank, infer_net, embedding_net, sample_queue, priority_queue, device, config: Config):
+def train_loop(rank, infer_net, predict_net, embedding_net, sample_queue, priority_queue, device, config: Config):
   if rank == 0:
     summary_writer = SummaryWriter("logs")
 
   agent = R2D2Agent(device, config)
   agent.qnet.load_state_dict(infer_net.state_dict())
   agent.target_qnet.load_state_dict(infer_net.state_dict())
+
+  RND_net = RNDNetwork(device, config, predict_net)
+  action_prediction_net = ActionPredictionNetwork(device, config, embedding_net)
 
   beta_table = get_beta_table(config)
   gamma_table = get_gamma_table(config)
@@ -209,7 +216,8 @@ def train_loop(rank, infer_net, embedding_net, sample_queue, priority_queue, dev
     loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
 
     # 訓練
-    embedding_net.train(transitions)
+    action_prediction_net.train(transitions)
+    RND_net.train(transitions)
     agent.train(loss)
 
     del transitions
