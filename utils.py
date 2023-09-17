@@ -10,9 +10,9 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
   return AgentInput(
       state=torch.from_numpy(agent_input_data.state.copy()).to(torch.float32).to(device),
       prev_action=torch.from_numpy(agent_input_data.prev_action.copy()).to(torch.int64).to(device),
-      prev_extrinsic_reward=torch.from_numpy(agent_input_data.prev_extrinsic_reward.copy()).to(torch.float32).to(device),
-      prev_intrinsic_reward=torch.from_numpy(agent_input_data.prev_intrinsic_reward.copy()).to(torch.float32).to(device),
-      policy_index=torch.from_numpy(agent_input_data.policy_index.copy()).to(torch.int64).to(device),
+      e_prev_reward=torch.from_numpy(agent_input_data.e_prev_reward.copy()).to(torch.float32).to(device),
+      i_prev_reward=torch.from_numpy(agent_input_data.i_prev_reward.copy()).to(torch.float32).to(device),
+      meta_index=torch.from_numpy(agent_input_data.meta_index.copy()).to(torch.int64).to(device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
@@ -22,9 +22,9 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
 
 
 def get_input_for_compute_loss(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
-  beta = beta_table[transitions["policy_index"]][:, np.newaxis]
-  gamma = gamma_table[transitions["policy_index"]]
-  rewards = transitions["extrinsic_reward"][:, config.replay_period:] + beta * transitions["intrinsic_reward"][:, config.replay_period:]
+  beta = beta_table[transitions["meta_index"]][:, np.newaxis]
+  gamma = gamma_table[transitions["meta_index"]]
+  rewards = transitions["e_reward"][:, config.replay_period:] + beta * transitions["i_reward"][:, config.replay_period:]
 
   target_epsilon = torch.empty(transitions["action"][:, config.replay_period:].shape, dtype=torch.float32, device=device)
   target_epsilon[:] = torch.from_numpy(beta.copy())

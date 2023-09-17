@@ -1,4 +1,5 @@
 import os
+from typing import NamedTuple
 
 import numpy as np
 import multiprocessing as mp
@@ -7,71 +8,78 @@ from multiprocessing import shared_memory
 from env import EnvOutput
 
 
+class ActorOutput(NamedTuple):
+  next_state: np.ndarray
+  reward: np.ndarray
+  done: np.ndarray
+  meta_index: np.ndarray
+
+
 class SharedData():
   def __init__(self, name, shape, dtype):
-    self.name = name
-    self.shape = shape
-    self.dtype = dtype
-    self.memory = None
+    self._name = name
+    self._shape = shape
+    self._dtype = dtype
+    self._memory = None
     self.data = None
 
   def __del__(self):
-    self.memory.close()
-    self.memory.unlink()
+    self._memory.close()
+    self._memory.unlink()
 
   # 共有メモリを新規作成
   def create_shared_memory(self):
-    if (os.path.isfile(f"/dev/shm/{self.name}")):
-      os.remove(f"/dev/shm/{self.name}")
+    if (os.path.isfile(f"/dev/shm/{self._name}")):
+      os.remove(f"/dev/shm/{self._name}")
 
-    self.memory = shared_memory.SharedMemory(create=True, size=self.dtype.itemsize * np.prod(self.shape),
-                                             name=self.name)
+    self._memory = shared_memory.SharedMemory(create=True, size=self._dtype.itemsize * np.prod(self._shape),
+                                              name=self._name)
 
   # 作成済み共有メモリを取得
   def get_shared_memory(self):
-    self.memory = shared_memory.SharedMemory(name=self.name)
+    self._memory = shared_memory.SharedMemory(name=self._name)
     # ndarrayオブジェクトを作成
     self.data = np.ndarray(
-        shape=self.shape, dtype=self.dtype, buffer=self.memory.buf)
+        shape=self._shape, dtype=self._dtype, buffer=self._memory.buf)
 
 
 # アクターとの情報共有
-class SharedEnvData():
+class SharedActorData():
 
   def __init__(self, ids, shared_data):
 
-    self.env_event = mp.Event()
-    self.action_event = mp.Event()
+    self._actor_event = mp.Event()
+    self._action_event = mp.Event()
     self.shared = shared_data
-    self.ids = ids
+    self._ids = ids
 
-  def put_env_data(self, env_output: EnvOutput, policy_index):
-    self.shared.data["next_state"][self.ids] = env_output.next_state
-    self.shared.data["reward"][self.ids] = env_output.reward
-    self.shared.data["done"][self.ids] = env_output.done
-    self.shared.data["policy_index"][self.ids] = policy_index
-    self.env_event.set()
+  def put_actor_data(self, env_output: EnvOutput, meta_index):
+    self.shared.data["next_state"][self._ids] = env_output.next_state
+    self.shared.data["reward"][self._ids] = env_output.reward
+    self.shared.data["done"][self._ids] = env_output.done
+    self.shared.data["meta_index"][self._ids] = meta_index
+    self._actor_event.set()
 
-  def get_env_data(self):
-    self.env_event.wait()
-    env_output = EnvOutput(
-      next_state=self.shared.data["next_state"][self.ids],
-      reward=self.shared.data["reward"][self.ids],
-      done=self.shared.data["done"][self.ids],
+  def get_actor_data(self):
+    self._actor_event.wait()
+    actor_output = ActorOutput(
+      next_state=self.shared.data["next_state"][self._ids],
+      reward=self.shared.data["reward"][self._ids],
+      done=self.shared.data["done"][self._ids],
+      meta_index=self.shared.data["meta_index"][self._ids],
     )
-    policy_index = self.shared.data["policy_index"][self.ids]
 
-    self.env_event.clear()
+    self._actor_event.clear()
 
-    return self.ids, env_output, policy_index
+    return self._ids, actor_output
 
   def put_action(self, action):
-    self.shared.data["action"][self.ids] = action
-    self.action_event.set()
+    self.shared.data["action"][self._ids] = action
+    self._action_event.set()
 
   def get_action(self):
-    self.action_event.wait()
-    action = self.shared.data["action"][self.ids]
-    self.action_event.clear()
+    self._action_event.wait()
+    action = self.shared.data["action"][self._ids]
+    self._action_event.clear()
 
     return action

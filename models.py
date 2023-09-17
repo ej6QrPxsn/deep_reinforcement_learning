@@ -61,15 +61,15 @@ class R2D2Network(nn.Module):
     feature_out = self._feature(feature_in / 255.)
 
     prev_action_one_hot = F.one_hot(agent_input.prev_action, num_classes=self._config.action_space)
-    policy_one_hot = F.one_hot(agent_input.policy_index, num_classes=self._config.num_arms)
+    policy_one_hot = F.one_hot(agent_input.meta_index, num_classes=self._config.num_arms)
 
     # batch, (burn_in + )seq, conv outputs + reward + actions
     lstm_in = torch.cat((
       # batch * seq -> batch, seq
       feature_out.reshape(batch_size, seq_len, -1),
       prev_action_one_hot,
-      agent_input.prev_extrinsic_reward,
-      agent_input.prev_intrinsic_reward,
+      agent_input.e_prev_reward,
+      agent_input.i_prev_reward,
       policy_one_hot,
     ), 2)
 

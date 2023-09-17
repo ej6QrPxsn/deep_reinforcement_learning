@@ -14,7 +14,7 @@ from replay_buffer import replay_loop
 
 import os
 
-from shared_data import SharedData, SharedEnvData
+from shared_data import SharedActorData, SharedData
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -58,32 +58,32 @@ if __name__ == "__main__":
   )
   shared_data.create_shared_memory()
 
-  # 環境データ共有
-  shared_env_datas = np.empty(config.num_actors + config.num_eval_envs, dtype=object)
+  # アクターデータ共有
+  shared_actor_datas = np.empty(config.num_actors + config.num_eval_envs, dtype=object)
   for i in range(config.num_actors):
-    shared_env_datas[i] = SharedEnvData(env_ids[i], shared_data)
-    p = mp.Process(target=actor_loop, args=(env_ids[i], log_ids, shared_env_datas[i], config))
+    shared_actor_datas[i] = SharedActorData(env_ids[i], shared_data)
+    p = mp.Process(target=actor_loop, args=(env_ids[i], log_ids, shared_actor_datas[i], config))
     p.start()
     processes.append(p)
-  shared_env_datas[-1] = SharedEnvData([config.num_train_envs], shared_data)
+  shared_actor_datas[-1] = SharedActorData([config.num_train_envs], shared_data)
 
   # 推論プロセスごとのアクター
   inference_actor_indexes = np.split(np.arange(config.num_actors), config.num_inferences)
 
   for i in range(config.num_inferences):
     actor_indexes = inference_actor_indexes[i]
-    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_net, predict_net, embedding_net, transition_queue, shared_env_datas[actor_indexes], device, config))
+    p = mp.Process(target=inference_loop, args=(actor_indexes, infer_net, predict_net, embedding_net, transition_queue, shared_actor_datas[actor_indexes], device, config))
     p.start()
     processes.append(p)
 
   eval_env_queue = mp.Queue()
   eval_action_queue = mp.SimpleQueue()
 
-  p = mp.Process(target=tester_loop, args=(shared_env_datas[-1], config))
+  p = mp.Process(target=tester_loop, args=(shared_actor_datas[-1], config))
   p.start()
   processes.append(p)
 
-  p = mp.Process(target=eval_loop, args=(infer_net, predict_net, embedding_net, config, shared_env_datas[-1], device))
+  p = mp.Process(target=eval_loop, args=(infer_net, predict_net, embedding_net, config, shared_actor_datas[-1], device))
   p.start()
   processes.append(p)
 

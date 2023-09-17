@@ -7,22 +7,22 @@ class MetaController:
   def __init__(self, config: Config) -> None:
     self._config = config
     self._reward_table = np.zeros((config.num_env_batches, config.bandit_window_size, config.num_arms))
-    self._policy_index = np.zeros((config.num_env_batches, 1), dtype=int)
+    self._meta_index = np.zeros((config.num_env_batches, 1), dtype=int)
     self._all_ids = np.arange(config.num_env_batches)
 
     self._rng = random.default_rng()
 
   def reset(self):
     self._reward_table[self._all_ids] = 0
-    self._policy_index[self._all_ids] = self._config.num_arms - 1
-    return self._policy_index.squeeze(-1)
+    self._meta_index[self._all_ids] = self._config.num_arms - 1
+    return self._meta_index.squeeze(-1)
 
   def update(self, ids, steps, rewards):
     self._reward_table[ids, 1:, :] = self._reward_table[ids, 0:-1, :]
-    self._reward_table[ids, 0, self._policy_index[ids]] = rewards[ids]
+    self._reward_table[ids, 0, self._meta_index[ids]] = rewards[ids]
 
-    self._policy_index[ids] = self._get_arm_index(ids, steps)[:, np.newaxis]
-    return self._policy_index.squeeze(-1)
+    self._meta_index[ids] = self._get_arm_index(ids, steps)[:, np.newaxis]
+    return self._meta_index.squeeze(-1)
 
   def _get_max_arg_index(self, ids, steps):
     steps = np.where(steps < 2, 2, steps)

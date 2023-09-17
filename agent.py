@@ -13,40 +13,40 @@ class R2D2Agent:
     self._device = device
     self._config = config
 
-    self.qnet = R2D2Network(self._device, self._config).to(self._device)
-    self.target_qnet = R2D2Network(self._device, self._config).to(self._device)
+    self.online_net = R2D2Network(self._device, self._config).to(self._device)
+    self.target_net = R2D2Network(self._device, self._config).to(self._device)
     self._optimizer = optim.Adam(
-      params=self.qnet.parameters(),
+      params=self.online_net.parameters(),
       lr=config.adam_r2d2_learning_rate,
       betas=(config.adam_beta1, config.adam_beta2),
       eps=config.adam_epsilon)
 
   def update_target(self):
-    self.target_qnet.load_state_dict(self.qnet.state_dict())
+    self.target_net.load_state_dict(self.online_net.state_dict())
 
   def get_agent_input_burn_in_from_transition(self, transition):
     prev_action = np.concatenate([
       transition["prev_action"][:, np.newaxis],
       transition["action"][:, :self._config.replay_period - 1]
     ], axis=1)
-    prev_extrinsic_reward = np.concatenate([
-      transition["prev_extrinsic_reward"][:, np.newaxis],
-      transition["extrinsic_reward"][:, :self._config.replay_period - 1]
+    e_prev_reward = np.concatenate([
+      transition["e_prev_reward"][:, np.newaxis],
+      transition["e_reward"][:, :self._config.replay_period - 1]
     ], axis=1)
-    prev_intrinsic_reward = np.concatenate([
-      transition["prev_intrinsic_reward"][:, np.newaxis],
-      transition["intrinsic_reward"][:, :self._config.replay_period - 1]
+    i_prev_reward = np.concatenate([
+      transition["i_prev_reward"][:, np.newaxis],
+      transition["i_reward"][:, :self._config.replay_period - 1]
     ], axis=1)
 
-    policy_index = torch.empty(prev_action.shape, dtype=int, device=self._device)
-    policy_index[:] = torch.from_numpy(transition["policy_index"][:, np.newaxis].copy())
+    meta_index = torch.empty(prev_action.shape, dtype=int, device=self._device)
+    meta_index[:] = torch.from_numpy(transition["meta_index"][:, np.newaxis].copy())
 
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, :self._config.replay_period].copy()).to(torch.float32).to(self._device),
       prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(self._device),
-      prev_extrinsic_reward=torch.from_numpy(prev_extrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self._device),
-      prev_intrinsic_reward=torch.from_numpy(prev_intrinsic_reward.copy()).unsqueeze(-1).to(torch.float32).to(self._device),
-      policy_index=policy_index,
+      e_prev_reward=torch.from_numpy(e_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(self._device),
+      i_prev_reward=torch.from_numpy(i_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(self._device),
+      meta_index=meta_index,
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
         torch.from_numpy(transition["prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(self._device),
@@ -55,30 +55,30 @@ class R2D2Agent:
     )
 
   def get_agent_input_from_transition(self, transition, lstm_state):
-    policy_index = torch.empty(transition["action"][:, self._config.replay_period - 1:-1].shape, dtype=int, device=self._device)
-    policy_index[:] = torch.from_numpy(transition["policy_index"][:, np.newaxis].copy())
+    meta_index = torch.empty(transition["action"][:, self._config.replay_period - 1:-1].shape, dtype=int, device=self._device)
+    meta_index[:] = torch.from_numpy(transition["meta_index"][:, np.newaxis].copy())
 
     return AgentInput(
       state=torch.from_numpy(transition["state"][:, self._config.replay_period:].copy()).to(torch.float32).to(self._device),
       prev_action=torch.from_numpy(transition["action"][:, self._config.replay_period - 1:-1].copy()).to(torch.int64).to(self._device),
-      prev_extrinsic_reward=torch.from_numpy(transition["extrinsic_reward"][:, self._config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self._device),
-      prev_intrinsic_reward=torch.from_numpy(transition["intrinsic_reward"][:, self._config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self._device),
-      policy_index=policy_index,
+      e_prev_reward=torch.from_numpy(transition["e_reward"][:, self._config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self._device),
+      i_prev_reward=torch.from_numpy(transition["i_reward"][:, self._config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(self._device),
+      meta_index=meta_index,
       prev_lstm_state=lstm_state
     )
 
   def compute_loss(self, transitions, beta_table, gamma_table):
     # burn in
     model_input = self.get_agent_input_burn_in_from_transition(transitions)
-    _, qnet_lstm_state = self.qnet(model_input)
-    _, target_qnet_lstm_state = self.target_qnet(model_input)
+    _, qnet_lstm_state = self.online_net(model_input)
+    _, target_qnet_lstm_state = self.target_net(model_input)
 
     # 推論
     qnet_input = self.get_agent_input_from_transition(transitions, qnet_lstm_state)
     target_qnet_input = self.get_agent_input_from_transition(transitions, target_qnet_lstm_state)
 
-    qnet_out, _ = self.qnet(qnet_input)
-    target_qnet_out, _ = self.target_qnet(target_qnet_input)
+    qnet_out, _ = self.online_net(qnet_input)
+    target_qnet_out, _ = self.target_net(target_qnet_input)
 
     input = get_input_for_compute_loss(transitions, self._config, self._device, beta_table, gamma_table)
 

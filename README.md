@@ -2,7 +2,7 @@
 
 ## 紹介
 
-SEED RLでのNGUをPytorchで実装しています。また、以下を追加で実装しています。
+SEED RLでのNGUをPytorchで実装しています。
 
 ### 参照論文
 
