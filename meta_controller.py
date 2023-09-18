@@ -4,11 +4,11 @@ from numpy import random
 
 
 class MetaController:
-  def __init__(self, config: Config) -> None:
+  def __init__(self, config: Config, batch_size) -> None:
     self._config = config
-    self._reward_table = np.zeros((config.num_env_batches, config.bandit_window_size, config.num_arms))
-    self._meta_index = np.zeros((config.num_env_batches, 1), dtype=int)
-    self._all_ids = np.arange(config.num_env_batches)
+    self._reward_table = np.zeros((batch_size, config.bandit_window_size, config.num_arms))
+    self._meta_index = np.zeros((batch_size, 1), dtype=int)
+    self._all_ids = np.arange(batch_size)
 
     self._rng = random.default_rng()
 

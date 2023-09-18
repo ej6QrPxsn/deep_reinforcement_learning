@@ -39,6 +39,11 @@ class Config:
   # 評価環境
   num_eval_envs = 1
 
+  # 評価は一定エピソードごとに更新
+  eval_update_period = 5
+  # 推論は一定フレームごとに更新
+  infer_update_period = 400
+
   # sliding window UCB
   num_arms = 32
   bandit_window_size = 90
@@ -66,7 +71,7 @@ class Config:
   eval_epsilon = 0.01
   target_epsilon = 0.01
   retrace_lambda = 0.95
-  target_update_period = 2500
+  target_update_period = 1500
   rescaling_epsilon = 1e-3
 
   # LSTM

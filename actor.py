@@ -17,9 +17,8 @@ def actor_loop(ids, log_ids, share_actor_data, config: Config):
   total_steps = 0
   episode_rewards = np.zeros(config.num_env_batches)
   episode_counts = np.zeros(config.num_env_batches, dtype=int)
-  meta_controller = MetaController(config)
-  # meta_index = meta_controller.reset()
-  meta_index = ids % config.num_arms
+  meta_controller = MetaController(config, config.num_env_batches)
+  meta_index = meta_controller.reset()
 
   env = BatchedEnv(config)
   states = env.reset()
@@ -46,7 +45,7 @@ def actor_loop(ids, log_ids, share_actor_data, config: Config):
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
-      # meta_index = meta_controller.update(indexes, episode_counts, episode_rewards)
+      meta_index = meta_controller.update(indexes, episode_counts, episode_rewards)
       for index in indexes:
         env_id = ids[index]
         if env_id in log_ids:
@@ -62,7 +61,10 @@ def tester_loop(share_actor_data: SharedActorData, config: Config):
   share_actor_data.shared.get_shared_memory()
 
   total_steps = 0
-  episode_reward = 0
+  episode_rewards = np.zeros(1)
+  episode_counts = np.zeros(1, dtype=int)
+  meta_controller = MetaController(config, 1)
+  meta_index = meta_controller.reset()
 
   env = AtariEnv(config.env_name)
   states = env.reset()
@@ -83,12 +85,14 @@ def tester_loop(share_actor_data: SharedActorData, config: Config):
     action = share_actor_data.get_action()
 
     env_output = env.step(action[0])
-    episode_reward += env_output.reward
+    episode_rewards += env_output.reward
 
     share_actor_data.put_actor_data(env_output, meta_index)
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
-      summary_writer.add_scalar("reward/eval", episode_reward, total_steps)
+      meta_index = meta_controller.update(indexes, episode_counts, episode_rewards)
+      summary_writer.add_scalar("reward/eval", episode_rewards[0], total_steps)
 
-      episode_reward = 0
+      episode_counts[indexes] += 1
+      episode_rewards[indexes] = 0

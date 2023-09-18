@@ -15,9 +15,76 @@ def to_agent_input(agent_input_data: AgentInputData, device) -> AgentInput:
       meta_index=torch.from_numpy(agent_input_data.meta_index.copy()).to(torch.int64).to(device),
       prev_lstm_state=(
         # batch, num_layer -> num_layer, batch
-        torch.from_numpy(agent_input_data.hidden_state.copy()).permute(1, 0, 2).to(device),
-        torch.from_numpy(agent_input_data.cell_state.copy()).permute(1, 0, 2).to(device)
+        torch.from_numpy(agent_input_data.e_lstm_states.hidden_state.copy()).permute(1, 0, 2).to(device),
+        torch.from_numpy(agent_input_data.e_lstm_states.cell_state.copy()).permute(1, 0, 2).to(device)
       )
+  ), AgentInput(
+      state=torch.from_numpy(agent_input_data.state.copy()).to(torch.float32).to(device),
+      prev_action=torch.from_numpy(agent_input_data.prev_action.copy()).to(torch.int64).to(device),
+      e_prev_reward=torch.from_numpy(agent_input_data.e_prev_reward.copy()).to(torch.float32).to(device),
+      i_prev_reward=torch.from_numpy(agent_input_data.i_prev_reward.copy()).to(torch.float32).to(device),
+      meta_index=torch.from_numpy(agent_input_data.meta_index.copy()).to(torch.int64).to(device),
+      prev_lstm_state=(
+        # batch, num_layer -> num_layer, batch
+        torch.from_numpy(agent_input_data.i_lstm_states.hidden_state.copy()).permute(1, 0, 2).to(device),
+        torch.from_numpy(agent_input_data.i_lstm_states.cell_state.copy()).permute(1, 0, 2).to(device)
+      )
+  )
+
+
+def get_agent_input_burn_in_from_transition(transition, device, config):
+  prev_action = np.concatenate([
+    transition["prev_action"][:, np.newaxis],
+    transition["action"][:, :config.replay_period - 1]
+  ], axis=1)
+  e_prev_reward = np.concatenate([
+    transition["e_prev_reward"][:, np.newaxis],
+    transition["e_reward"][:, :config.replay_period - 1]
+  ], axis=1)
+  i_prev_reward = np.concatenate([
+    transition["i_prev_reward"][:, np.newaxis],
+    transition["i_reward"][:, :config.replay_period - 1]
+  ], axis=1)
+
+  meta_index = torch.empty(prev_action.shape, dtype=int, device=device)
+  meta_index[:] = torch.from_numpy(transition["meta_index"][:, np.newaxis].copy())
+
+  return AgentInput(
+    state=torch.from_numpy(transition["state"][:, :config.replay_period].copy()).to(torch.float32).to(device),
+    prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(device),
+    e_prev_reward=torch.from_numpy(e_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
+    i_prev_reward=torch.from_numpy(i_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
+    meta_index=meta_index,
+    prev_lstm_state=(
+      # batch, num_layer -> num_layer, batch
+      torch.from_numpy(transition["e_prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
+      torch.from_numpy(transition["e_prev_cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
+    )
+  ), AgentInput(
+    state=torch.from_numpy(transition["state"][:, :config.replay_period].copy()).to(torch.float32).to(device),
+    prev_action=torch.from_numpy(prev_action.copy()).to(torch.int64).to(device),
+    e_prev_reward=torch.from_numpy(e_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
+    i_prev_reward=torch.from_numpy(i_prev_reward.copy()).unsqueeze(-1).to(torch.float32).to(device),
+    meta_index=meta_index,
+    prev_lstm_state=(
+      # batch, num_layer -> num_layer, batch
+      torch.from_numpy(transition["i_prev_hidden_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device),
+      torch.from_numpy(transition["i_prev_cell_state"].copy()).to(torch.float32).permute(1, 0, 2).to(device)
+    )
+  )
+
+
+def get_agent_input_from_transition(transition, lstm_state, device, config):
+  meta_index = torch.empty(transition["action"][:, config.replay_period - 1:-1].shape, dtype=int, device=device)
+  meta_index[:] = torch.from_numpy(transition["meta_index"][:, np.newaxis].copy())
+
+  return AgentInput(
+    state=torch.from_numpy(transition["state"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+    prev_action=torch.from_numpy(transition["action"][:, config.replay_period - 1:-1].copy()).to(torch.int64).to(device),
+    e_prev_reward=torch.from_numpy(transition["e_reward"][:, config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(device),
+    i_prev_reward=torch.from_numpy(transition["i_reward"][:, config.replay_period - 1:-1].copy()).unsqueeze(-1).to(torch.float32).to(device),
+    meta_index=meta_index,
+    prev_lstm_state=lstm_state
   )
 
 
@@ -80,17 +147,31 @@ def h_1(x):
 def get_epsilon_greedy_policy(qvalues, n_actions, epsilon, device):
   greedy_action = torch.argmax(qvalues, 2, keepdim=True)
 
+  greedy_probability = 1 - epsilon * ((n_actions - 1) / n_actions)
+
   epsilon_greedy_policy = torch.zeros(qvalues.shape).to(device)
-  # 1 - epsilonの確率でq値が最大のものだけ選択される
-  # (1 - epsilon)
-  epsilon_greedy_policy.scatter_(2, greedy_action, 1 - epsilon)
+
   # epsilonの確率でランダムアクション
-  # epsilon * (1 / アクション数)
-  epsilon_greedy_policy[:] += epsilon / n_actions
+  epsilon_greedy_policy[:] = epsilon / n_actions
+
+  # 1 - epsilonの確率でq値が最大のものだけ選択される
+  epsilon_greedy_policy.scatter_(2, greedy_action, greedy_probability)
 
   greedy_policy = epsilon_greedy_policy.gather(2, greedy_action)
   # 選択されるアクション、ポリシー、すべてのポリシーを返す
   return greedy_action, greedy_policy, epsilon_greedy_policy
+
+
+def get_greedy_policy(qvalues, n_actions, epsilon, device):
+  greedy_action = torch.argmax(qvalues, 2, keepdim=True)
+
+  greedy_probability = 1 - epsilon * ((n_actions - 1) / n_actions)
+
+  greedy_policy = torch.zeros(qvalues.shape).to(device)
+
+  greedy_policy.scatter_(2, greedy_action, greedy_probability)
+
+  return greedy_policy
 
 
 def select_actions(qvalues, n_actions, epsilons, device, batch_size):
@@ -130,7 +211,7 @@ def get_retrace_operator(s, trace_coefficients, td, target_q, gammas, n_steps):
   return target_q[:, s] + torch.stack(ret).sum(0)
 
 
-def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, config: Config, device, ):
+def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, target_policy_qvalue, config: Config, device, ):
   # tdのj+1のため、実質的なseqは-1
   seq_len = behaviour_qvalues.shape[1] - 1
 
@@ -138,7 +219,7 @@ def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, con
   target_epsilon = torch.empty((behaviour_qvalues.shape[0], behaviour_qvalues.shape[1], 1), dtype=torch.float32, device=device)
   target_epsilon[:] = config.target_epsilon
 
-  _, _, target_policies = get_epsilon_greedy_policy(target_qvalues, config.action_space, target_epsilon, device)
+  target_policies = get_greedy_policy(target_policy_qvalue, config.action_space, target_epsilon, device)
 
   behaviour_q = behaviour_qvalues.gather(2, input.action).squeeze(-1)
 

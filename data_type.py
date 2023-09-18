@@ -4,22 +4,29 @@ import numpy as np
 import torch
 
 
+class LstmStates(NamedTuple):
+  hidden_state: np.ndarray
+  cell_state: np.ndarray
+
+
 class AgentInputData(NamedTuple):
   state: np.ndarray
   prev_action: np.ndarray
   e_prev_reward: np.ndarray
   i_prev_reward: np.ndarray
   meta_index: np.ndarray
-  hidden_state: np.ndarray
-  cell_state: np.ndarray
+  e_lstm_states: LstmStates
+  i_lstm_states: LstmStates
 
 
 class SelectActionOutput(NamedTuple):
   action: np.ndarray
-  qvalue: np.ndarray
   policy: np.ndarray
-  hidden_state: np.ndarray
-  cell_state: np.ndarray
+  qvalue: np.ndarray
+  e_qvalue: np.ndarray
+  e_lstm_states: LstmStates
+  i_qvalue: np.ndarray
+  i_lstm_states: LstmStates
 
 
 class AgentInput(NamedTuple):
@@ -61,8 +68,12 @@ class DataType():
         ("prev_action", "u1"),
         ("e_prev_reward", "f4"),
         ("i_prev_reward", "f4"),
-        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("e_qvalue", "f4", config.action_space),
+        ("e_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("e_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("i_qvalue", "f4", config.action_space),
+        ("i_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("i_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])
 
     # 遷移データ
@@ -77,8 +88,10 @@ class DataType():
       ("prev_action", "u1"),
       ("e_prev_reward", "f4"),
       ("i_prev_reward", "f4"),
-      ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-      ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+      ("e_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+      ("e_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+      ("i_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+      ("i_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])
 
     # 環境データ
@@ -96,6 +109,8 @@ class DataType():
         ("e_prev_reward", "f4", (1, 1)),
         ("i_prev_reward", "f4", (1, 1)),
         ("meta_index", "u1", (1,)),
-        ("prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
-        ("prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("e_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("e_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("i_prev_hidden_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
+        ("i_prev_cell_state", "f4", (config.lstm_num_layers, config.lstm_state_size)),
     ])

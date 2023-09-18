@@ -1,6 +1,6 @@
 import numpy as np
 from config import Config
-from data_type import AgentInputData, DataType, SelectActionOutput
+from data_type import AgentInputData, DataType, LstmStates, SelectActionOutput
 from reward_generator import RewardGenerator
 from shared_data import ActorOutput
 
@@ -31,6 +31,8 @@ class LocalBuffer:
 
     self._base_indexes = np.zeros(batch_size, dtype=int)
 
+    self._rng = np.random.default_rng()
+
   def get_agent_input(self):
     return AgentInputData(
         self._agent_input["state"].copy(),
@@ -38,8 +40,14 @@ class LocalBuffer:
         self._agent_input["e_prev_reward"].copy(),
         self._agent_input["i_prev_reward"].copy(),
         self._agent_input["meta_index"].copy(),
-        self._agent_input["prev_hidden_state"].copy(),
-        self._agent_input["prev_cell_state"].copy(),
+        e_lstm_states=LstmStates(
+          self._agent_input["e_prev_hidden_state"].copy(),
+          self._agent_input["e_prev_cell_state"].copy(),
+        ),
+        i_lstm_states=LstmStates(
+          self._agent_input["i_prev_hidden_state"].copy(),
+          self._agent_input["i_prev_cell_state"].copy(),
+        ),
     )
 
   def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput,
@@ -74,12 +82,18 @@ class LocalBuffer:
     self._work_transition["i_reward"][self._all_ids, self._indexes] = intrinsic_rewards
     self._work_transition["done"][self._all_ids, self._indexes] = batched_actor_output.done
     self._work_transition["meta_index"][self._all_ids, self._indexes] = prev_meta_indexes
+    self._work_transition["e_qvalue"][self._all_ids, self._indexes] = select_action_output.e_qvalue
+    self._work_transition["i_qvalue"][self._all_ids, self._indexes] = select_action_output.i_qvalue
 
     self._work_transition["prev_action"][self._all_ids, self._indexes] = prev_input.prev_action[:, 0]
     self._work_transition["e_prev_reward"][self._all_ids, self._indexes] = prev_input.e_prev_reward[:, 0, 0]
     self._work_transition["i_prev_reward"][self._all_ids, self._indexes] = prev_input.i_prev_reward[:, 0, 0]
-    self._work_transition["prev_hidden_state"][self._all_ids, self._indexes] = prev_input.hidden_state
-    self._work_transition["prev_cell_state"][self._all_ids, self._indexes] = prev_input.cell_state
+
+    self._work_transition["e_prev_hidden_state"][self._all_ids, self._indexes] = prev_input.e_lstm_states.hidden_state
+    self._work_transition["e_prev_cell_state"][self._all_ids, self._indexes] = prev_input.e_lstm_states.cell_state
+    self._work_transition["i_prev_hidden_state"][self._all_ids, self._indexes] = prev_input.i_lstm_states.hidden_state
+    self._work_transition["i_prev_cell_state"][self._all_ids, self._indexes] = prev_input.i_lstm_states.cell_state
+
     self._indexes += 1
 
     # 次の推論入力用
@@ -88,8 +102,10 @@ class LocalBuffer:
     self._agent_input["e_prev_reward"][self._all_ids, 0, 0] = batched_actor_output.reward
     self._agent_input["i_prev_reward"][self._all_ids, 0, 0] = intrinsic_rewards
     self._agent_input["meta_index"][self._all_ids, 0] = batched_actor_output.meta_index
-    self._agent_input["prev_hidden_state"] = select_action_output.hidden_state
-    self._agent_input["prev_cell_state"] = select_action_output.cell_state
+    self._agent_input["e_prev_hidden_state"] = select_action_output.e_lstm_states.hidden_state
+    self._agent_input["e_prev_cell_state"] = select_action_output.e_lstm_states.cell_state
+    self._agent_input["i_prev_hidden_state"] = select_action_output.i_lstm_states.hidden_state
+    self._agent_input["i_prev_cell_state"] = select_action_output.i_lstm_states.cell_state
 
     ret = ()
     # 蓄積長さ
@@ -134,11 +150,13 @@ class LocalBuffer:
       self._reward_generator.reset(done_ids)
 
       # state, meta_indexはエピソード終了で次の値を受け取っているので、ここでは設定しない
-      self._agent_input["prev_action"][done_ids] = 0
+      self._agent_input["prev_action"][done_ids] = self._rng.integers(self._config.action_space, size=(len(done_ids), 1))
       self._agent_input["e_prev_reward"][done_ids] = 0
       self._agent_input["i_prev_reward"][done_ids] = 0
-      self._agent_input["prev_hidden_state"][done_ids] = 0
-      self._agent_input["prev_cell_state"][done_ids] = 0
+      self._agent_input["e_prev_hidden_state"][done_ids] = 0
+      self._agent_input["e_prev_cell_state"][done_ids] = 0
+      self._agent_input["i_prev_hidden_state"][done_ids] = 0
+      self._agent_input["i_prev_cell_state"][done_ids] = 0
     return ret
 
   def _to_transition(self, ids):
@@ -153,8 +171,10 @@ class LocalBuffer:
       self._transition["prev_action"][i] = self._work_transition["prev_action"][id, self._base_indexes[id]]
       self._transition["e_prev_reward"][i] = self._work_transition["e_prev_reward"][id, self._base_indexes[id]]
       self._transition["i_prev_reward"][i] = self._work_transition["i_prev_reward"][id, self._base_indexes[id]]
-      self._transition["prev_hidden_state"][i] = self._work_transition["prev_hidden_state"][id, self._base_indexes[id]]
-      self._transition["prev_cell_state"][i] = self._work_transition["prev_cell_state"][id, self._base_indexes[id]]
+      self._transition["e_prev_hidden_state"][i] = self._work_transition["e_prev_hidden_state"][id, self._base_indexes[id]]
+      self._transition["e_prev_cell_state"][i] = self._work_transition["e_prev_cell_state"][id, self._base_indexes[id]]
+      self._transition["i_prev_hidden_state"][i] = self._work_transition["i_prev_hidden_state"][id, self._base_indexes[id]]
+      self._transition["i_prev_cell_state"][i] = self._work_transition["i_prev_cell_state"][id, self._base_indexes[id]]
       self._loss_qvalues[i] = self._work_transition["qvalue"][id, self._indexes[id] - self._seq_len:self._indexes[id]]
 
     ret = (self._transition[:len(ids)].copy(), self._loss_qvalues[:len(ids)].copy())

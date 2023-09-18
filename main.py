@@ -9,7 +9,7 @@ from data_type import DataType
 
 from env import AtariEnv
 from learner import eval_loop, inference_loop, train_loop
-from models import EmbeddingNetwork, R2D2Network, RNDPredictionNetwork
+from models import Agent57Network, EmbeddingNetwork, RNDPredictionNetwork
 from replay_buffer import replay_loop
 
 import os
@@ -41,9 +41,8 @@ if __name__ == "__main__":
   p.start()
   processes.append(p)
 
-  infer_net = R2D2Network(device, config)
+  infer_net = Agent57Network(device, config)
   infer_net.share_memory()
-  infer_net.to(device)
 
   predict_net = RNDPredictionNetwork(device, config)
   embedding_net = EmbeddingNetwork(device, config)

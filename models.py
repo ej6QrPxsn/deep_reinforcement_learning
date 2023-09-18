@@ -2,9 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from config import Config
-from data_type import SelectActionOutput
+from data_type import LstmStates, SelectActionOutput
 
-from utils import AgentInput, select_actions
+from utils import AgentInput, select_actions, to_agent_input
 import torch.nn.functional as F
 
 
@@ -52,6 +52,12 @@ class R2D2Network(nn.Module):
         nn.Linear(512, config.action_space),
     )
 
+  def set_weight(self, weight):
+    self.load_state_dict(weight)
+
+  def get_weight(self):
+    return self.state_dict()
+
   def forward(self, agent_input: AgentInput):
     batch_size = agent_input.state.shape[0]
     seq_len = agent_input.state.shape[1]
@@ -85,22 +91,65 @@ class R2D2Network(nn.Module):
     # batch　* seq -> batch, seq
     return dueling_out.reshape(batch_size, seq_len, *dueling_out.shape[1:]), lstm_states
 
-  def initial_state(self, batch_size):
-    return (np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32),
-            np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32))
 
-  def select_actions(self, agent_input, epsilons, batch_size):
-    qvalues, (hidden_state, cell_state) = self.forward(agent_input)
+class Agent57Network():
+
+  def __init__(self, device, config, in_channels=4):
+    """
+    Initialize Deep Q Network
+
+    Args:
+        in_channels (int): number of input channels
+        n_actions (int): number of outputs
+    """
+    self._config = config
+    self._device = device
+    self.e_net = R2D2Network(device, config).to(device)
+    self.i_net = R2D2Network(device, config).to(device)
+
+  def share_memory(self):
+    self.e_net.share_memory()
+    self.i_net.share_memory()
+
+  def initial_state(self, batch_size):
+    return LstmStates(
+      np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32),
+      np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32)
+    ), LstmStates(
+      np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32),
+      np.zeros((batch_size, self._config.lstm_num_layers, self._config.lstm_state_size), dtype=np.float32)
+    )
+
+  def set_weight(self, e_weight, i_weight):
+    self.e_net.set_weight(e_weight)
+    self.i_net.set_weight(i_weight)
+
+  def get_weight(self):
+    return self.e_net.get_weight(), self.i_net.get_weight()
+
+  def select_actions(self, agent_input_data, epsilons, beta, batch_size):
+    e_input, i_input = to_agent_input(agent_input_data, self._device)
+    e_qvalues, (e_hidden_state, e_cell_state) = self.e_net(e_input)
+    i_qvalues, (i_hidden_state, i_cell_state) = self.i_net(i_input)
+
+    qvalues = e_qvalues + beta.unsqueeze(-1) * i_qvalues
     actions, policies = select_actions(qvalues, self._config.action_space, epsilons, self._device, batch_size)
-    qvalues = qvalues.squeeze(1).cpu().detach().numpy().copy()
+    qvalues = qvalues.squeeze(1).cpu().detach().numpy().copy(),
 
     return SelectActionOutput(
       action=actions,
-      qvalue=qvalues,
       policy=policies,
-      # num_layer, batch -> batch, num_layer
-      hidden_state=hidden_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
-      cell_state=cell_state.permute(1, 0, 2).cpu().detach().numpy().copy()
+      qvalue=qvalues,
+      e_qvalue=e_qvalues.squeeze(1).cpu().detach().numpy().copy(),
+      e_lstm_states=LstmStates(
+        hidden_state=e_hidden_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
+        cell_state=e_cell_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
+      ),
+      i_qvalue=i_qvalues.squeeze(1).cpu().detach().numpy().copy(),
+      i_lstm_states=LstmStates(
+        hidden_state=i_hidden_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
+        cell_state=i_cell_state.permute(1, 0, 2).cpu().detach().numpy().copy(),
+      )
     )
 
 
