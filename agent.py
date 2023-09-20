@@ -21,9 +21,9 @@ class R2D2Agent:
       betas=(config.adam_beta1, config.adam_beta2),
       eps=config.adam_epsilon)
 
-  def set_weight(self, e_weight, i_weight):
-    self.online_net.set_weight(e_weight)
-    self.target_net.set_weight(i_weight)
+  def set_weight(self, weight):
+    self.online_net.set_weight(weight)
+    self.target_net.set_weight(weight)
 
   def get_weight(self):
     return self.e_net.get_weight(), self.i_net.get_weight()

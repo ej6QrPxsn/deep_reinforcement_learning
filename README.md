@@ -2,7 +2,7 @@
 
 ## 紹介
 
-SEED RLでAgent57をPytorchで実装しています。
+SEED RL + Agent57をPytorchで実装しています。
 
 ### 参照論文
 
@@ -20,3 +20,25 @@ pip install -r requirements.txt
 ```
 python main.py
 ```
+
+## 結果
+
+### 実行環境
+
+Python 3.10 / Ryzen 5950x / RTX A4000
+
+#### 設定
+
+* Atari Game："Breakout"
+* アクター数：16
+* 1アクターあたり環境数：16
+* 訓練環境数：256
+* 推論プロセス数：4
+
+### ステップ数
+
+ ![image](images/breakout_step.png)
+
+### 実行時間
+
+ ![image](images/breakout_time.png)

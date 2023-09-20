@@ -11,7 +11,7 @@ from shared_data import SharedActorData
 from torch.utils.tensorboard import SummaryWriter
 import zstandard as zstd
 
-from utils import get_agent_input_burn_in_from_transition, get_beta_table, get_gamma_table, get_input_for_compute_loss, retrace_loss
+from utils import get_agent_input_burn_in_from_transition, get_beta_table, get_gamma_table, get_loss_input_for_replay, get_loss_input_for_train, retrace_loss
 
 
 def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
@@ -22,7 +22,7 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
   RND_net = RNDNetwork(device, config, predict_net)
   ids = [0]
   beta_table = get_beta_table(config)
-  rng = np.random.default_rng()  # or random.default_rng(0)
+  rng = np.random.default_rng()
 
   infer_net = Agent57Network(device, config)
   infer_net.set_weight(*shared_infer_net.get_weight())
@@ -30,7 +30,7 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
   reward_generator = RewardGenerator(batch_size, config, RND_net, embedding_net, device)
 
   e_prev_lstm_states, i_prev_lstm_states = infer_net.initial_state(batch_size)
-  prev_actions = np.zeros((batch_size, 1), dtype=np.uint8)
+  prev_actions = rng.integers(config.action_space, size=len(ids))
 
   _, actor_output = shared_actor_data.get_actor_data()
   agent_input_data = AgentInputData(
@@ -102,8 +102,10 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
     actor_indexes[-1] * config.num_env_batches + config.num_env_batches
   )
   first_env_id = env_ids[0]
+  ids = env_ids - first_env_id
 
   batch_size = len(env_ids)
+  rng = np.random.default_rng()
 
   infer_net = Agent57Network(device, config)
   infer_net.set_weight(*shared_infer_net.get_weight())
@@ -120,7 +122,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
   batched_layer = BatchedLayer(env_ids, shared_actor_datas, config)
 
   e_prev_lstm_states, i_prev_lstm_states = infer_net.initial_state(batch_size)
-  prev_actions = np.zeros(batch_size, dtype=np.uint8)
+  prev_actions = rng.integers(config.action_space, size=len(ids))
   prev_meta_indexes = np.zeros(batch_size, dtype=int)
 
   batched_actor_output = batched_layer.wait_actor_outputs(first_env_id)
@@ -180,7 +182,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
       transitions, qvalues = ret
       qvalues = torch.from_numpy(qvalues[:, config.replay_period:]).to(torch.float32).to(device)
 
-      input = get_input_for_compute_loss(transitions, config, device, beta_table, gamma_table)
+      input = get_loss_input_for_replay(transitions, config, device, beta_table, gamma_table)
 
       losses = retrace_loss(
         input=input,
@@ -220,10 +222,10 @@ def train_loop(rank, infer_net, predict_net, embedding_net, sample_queue, priori
   e_weight, i_weight = infer_net.get_weight()
 
   e_agent = R2D2Agent(device, config)
-  e_agent.set_weight(e_weight, e_weight)
+  e_agent.set_weight(e_weight)
 
   i_agent = R2D2Agent(device, config)
-  i_agent.set_weight(i_weight, i_weight)
+  i_agent.set_weight(i_weight)
 
   RND_net = RNDNetwork(device, config, predict_net)
   action_prediction_net = ActionPredictionNetwork(device, config, embedding_net)
@@ -242,7 +244,7 @@ def train_loop(rank, infer_net, predict_net, embedding_net, sample_queue, priori
     e_online_qvalue, e_target_qvalue = e_agent.get_qvalues(e_input, transitions)
     i_online_qvalue, i_target_qvalue = i_agent.get_qvalues(i_input, transitions)
 
-    loss_input = get_input_for_compute_loss(transitions, config, device, beta_table, gamma_table)
+    loss_input = get_loss_input_for_replay(transitions, config, device, beta_table, gamma_table)
 
     # リプレイのための統一損失
     beta = loss_input.beta.unsqueeze(-1)
@@ -255,8 +257,9 @@ def train_loop(rank, infer_net, predict_net, embedding_net, sample_queue, priori
     loss = (torch.FloatTensor(is_weights).to(device) * losses).mean(0)
 
     # 訓練のための個別損失
-    e_losses = retrace_loss(loss_input, e_online_qvalue, e_target_qvalue, target_qvalue, config, device)
-    i_losses = retrace_loss(loss_input, i_online_qvalue, i_target_qvalue, target_qvalue, config, device)
+    e_loss_input, i_loss_input = get_loss_input_for_train(transitions, config, device, beta_table, gamma_table)
+    e_losses = retrace_loss(e_loss_input, e_online_qvalue, e_target_qvalue, target_qvalue, config, device)
+    i_losses = retrace_loss(i_loss_input, i_online_qvalue, i_target_qvalue, target_qvalue, config, device)
 
     # seq sum -> batch mean
     e_loss = (torch.FloatTensor(is_weights).to(device) * e_losses).mean(0)

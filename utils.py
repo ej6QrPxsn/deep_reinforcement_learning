@@ -88,7 +88,7 @@ def get_agent_input_from_transition(transition, lstm_state, device, config):
   )
 
 
-def get_input_for_compute_loss(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
+def get_loss_input_for_replay(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
   beta = beta_table[transitions["meta_index"]][:, np.newaxis]
   gamma = gamma_table[transitions["meta_index"]]
   rewards = transitions["e_reward"][:, config.replay_period:] + beta * transitions["i_reward"][:, config.replay_period:]
@@ -99,6 +99,30 @@ def get_input_for_compute_loss(transitions, config: Config, device, beta_table, 
   return ComputeLossInput(
       action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
       reward=torch.from_numpy(rewards.copy()).to(torch.float32).to(device),
+      done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
+      policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
+      beta=target_epsilon,
+      gamma=torch.from_numpy(gamma[:, np.newaxis].copy()).to(torch.float32).to(device),
+  )
+
+
+def get_loss_input_for_train(transitions, config: Config, device, beta_table, gamma_table) -> ComputeLossInput:
+  beta = beta_table[transitions["meta_index"]][:, np.newaxis]
+  gamma = gamma_table[transitions["meta_index"]]
+
+  target_epsilon = torch.empty(transitions["action"][:, config.replay_period:].shape, dtype=torch.float32, device=device)
+  target_epsilon[:] = torch.from_numpy(beta.copy())
+
+  return ComputeLossInput(
+      action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
+      reward=torch.from_numpy(transitions["e_reward"][:, config.replay_period:].copy()).to(torch.float32).to(device),
+      done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
+      policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
+      beta=target_epsilon,
+      gamma=torch.from_numpy(gamma[:, np.newaxis].copy()).to(torch.float32).to(device),
+  ), ComputeLossInput(
+      action=torch.from_numpy(transitions["action"][:, config.replay_period:].copy()).to(torch.int64).unsqueeze(-1).to(device),
+      reward=torch.from_numpy(transitions["i_reward"][:, config.replay_period:].copy()).to(torch.float32).to(device),
       done=torch.from_numpy(transitions["done"][:, config.replay_period:].copy()).to(torch.bool).to(device),
       policy=torch.from_numpy(transitions["policy"][:, config.replay_period:].copy()).unsqueeze(-1).to(torch.float32).to(device),
       beta=target_epsilon,
@@ -162,18 +186,6 @@ def get_epsilon_greedy_policy(qvalues, n_actions, epsilon, device):
   return greedy_action, greedy_policy, epsilon_greedy_policy
 
 
-def get_greedy_policy(qvalues, n_actions, epsilon, device):
-  greedy_action = torch.argmax(qvalues, 2, keepdim=True)
-
-  greedy_probability = 1 - epsilon * ((n_actions - 1) / n_actions)
-
-  greedy_policy = torch.zeros(qvalues.shape).to(device)
-
-  greedy_policy.scatter_(2, greedy_action, greedy_probability)
-
-  return greedy_policy
-
-
 def select_actions(qvalues, n_actions, epsilons, device, batch_size):
   tensor_epsilons = torch.empty((batch_size, 1, 1), dtype=torch.float32, device=device)
   tensor_epsilons[:] = torch.tensor(epsilons).reshape(-1, 1, 1)
@@ -219,7 +231,7 @@ def retrace_loss(input: ComputeLossInput, behaviour_qvalues, target_qvalues, tar
   target_epsilon = torch.empty((behaviour_qvalues.shape[0], behaviour_qvalues.shape[1], 1), dtype=torch.float32, device=device)
   target_epsilon[:] = config.target_epsilon
 
-  target_policies = get_greedy_policy(target_policy_qvalue, config.action_space, target_epsilon, device)
+  _, _, target_policies = get_epsilon_greedy_policy(target_policy_qvalue, config.action_space, target_epsilon, device)
 
   behaviour_q = behaviour_qvalues.gather(2, input.action).squeeze(-1)
 
