@@ -91,8 +91,9 @@ def tester_loop(share_actor_data: SharedActorData, config: Config):
 
     indexes = np.where(env_output.done)[0]
     if indexes.size > 0:
-      meta_index = meta_controller.update(indexes, episode_counts, episode_rewards)
-      summary_writer.add_scalar("reward/eval", episode_rewards[0], total_steps)
+      if episode_counts[indexes] % config.eval_update_period == 0:
+        summary_writer.add_scalar("reward/eval", episode_rewards[0] / config.eval_update_period, total_steps)
+        episode_rewards[indexes] = 0
 
+      meta_index = meta_controller.update(indexes, episode_counts, episode_rewards)
       episode_counts[indexes] += 1
-      episode_rewards[indexes] = 0
