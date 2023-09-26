@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import torch
 from agent import ActionPredictionNetwork, R2D2Agent, RNDNetwork
@@ -26,6 +27,8 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
   rng = np.random.default_rng()
 
   action_getter = LossAndAction((1, 1, config.action_space), device, config)
+
+  executor = ThreadPoolExecutor()
 
   infer_net = Agent57Network(device, config)
   infer_net.set_weight(*shared_infer_net.get_weight())
@@ -59,7 +62,7 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
   # ここまで
 
   # 内的報酬取得
-  i_reward = reward_generator.get_intrinsic_reward(ids, RND_loss, controllable_state)
+  future_intrinsic_reward = executor.submit(reward_generator.get_intrinsic_reward, ids, RND_loss, controllable_state)
 
   select_action_output: SelectActionOutput = infer_net.select_actions(
     e_qvalues, e_lstm_state, i_qvalues, i_lstm_state,
@@ -75,6 +78,9 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
 
   while True:
     _, actor_output = shared_actor_data.get_actor_data()
+
+    i_reward = future_intrinsic_reward.result()
+
     agent_input_data = AgentInputData(
       state=np.expand_dims(actor_output.next_state, axis=1),
       prev_action=prev_actions.reshape(batch_size, 1),
@@ -99,7 +105,7 @@ def eval_loop(shared_infer_net, predict_net, embedding_net, config: Config,
     # ここまで
 
     # 内的報酬取得
-    i_reward = reward_generator.get_intrinsic_reward(ids, RND_loss, controllable_state)
+    future_intrinsic_reward = executor.submit(reward_generator.get_intrinsic_reward, ids, RND_loss, controllable_state)
 
     select_action_output: SelectActionOutput = infer_net.select_actions(
       e_qvalues, e_lstm_state, i_qvalues, i_lstm_state,
@@ -141,6 +147,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
   rng = np.random.default_rng()
 
   action_getter = LossAndAction((batch_size, 1, config.action_space), device, config)
+  executor = ThreadPoolExecutor()
 
   infer_net = Agent57Network(device, config)
   infer_net.set_weight(*shared_infer_net.get_weight())
@@ -202,7 +209,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
   # ここまで
 
   # 内的報酬取得
-  i_reward = reward_generator.get_intrinsic_reward(ids, RND_loss, controllable_state)
+  future_intrinsic_reward = executor.submit(reward_generator.get_intrinsic_reward, ids, RND_loss, controllable_state)
 
   select_action_output: SelectActionOutput = infer_net.select_actions(
     e_qvalues, e_lstm_state, i_qvalues, i_lstm_state,
@@ -228,6 +235,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
     # batched_env_output.reward(t),
     # batched_env_output.done(t)
 
+    i_reward = future_intrinsic_reward.result()
     ret = local_buffer.add(agent_input_data, select_action_output, batched_actor_output, prev_meta_indexes, i_reward)
     if ret and transition_queue.qsize() < config.num_train_envs:
       transitions, qvalues = ret
@@ -263,7 +271,7 @@ def inference_loop(actor_indexes, shared_infer_net, predict_net, embedding_net, 
     # ここまで
 
     # 内的報酬取得
-    i_reward = reward_generator.get_intrinsic_reward(ids, RND_loss, controllable_state)
+    future_intrinsic_reward = executor.submit(reward_generator.get_intrinsic_reward, ids, RND_loss, controllable_state)
 
     select_action_output: SelectActionOutput = infer_net.select_actions(
       e_qvalues, e_lstm_state, i_qvalues, i_lstm_state,
