@@ -51,7 +51,7 @@ class LocalBuffer:
     )
 
   def add(self, prev_input: AgentInputData, select_action_output: SelectActionOutput,
-          batched_actor_output: ActorOutput, prev_meta_indexes):
+          batched_actor_output: ActorOutput, prev_meta_indexes, intrinsic_rewards):
     # prev_input.state(t)
     # prev_input.prev_action(t - 1)
     # prev_input.e_prev_reward(t - 1)
@@ -70,9 +70,6 @@ class LocalBuffer:
     # batched_env_output.next_state(t + 1)
     # batched_env_output.reward(t)
     # batched_env_output.done(t)
-
-    # 内部報酬
-    intrinsic_rewards = self._reward_generator.get_intrinsic_reward(self._all_ids, prev_input.state)
 
     self._work_transition["state"][self._all_ids, self._indexes] = prev_input.state[self._all_ids, 0]
     self._work_transition["action"][self._all_ids, self._indexes] = select_action_output.action

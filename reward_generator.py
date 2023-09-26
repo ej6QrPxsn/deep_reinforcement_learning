@@ -61,16 +61,18 @@ def welford_finalize(prev_data, env_ids):
 
 
 class RewardGenerator():
-  def __init__(self, batch_size, config: Config, RND_net, embedding_net, device) -> None:
+  def __init__(self, batch_size, config: Config, device) -> None:
     self.device = device
-    self.life_long_novelty = LifeLongNovelty(batch_size, config, RND_net)
-    self.episodic_novelty = EpisodicNovelty(batch_size, config, embedding_net)
+    self.life_long_novelty = LifeLongNovelty(batch_size, config)
+    self.episodic_novelty = EpisodicNovelty(batch_size, config)
     self.clipping_factor = config.RND_clipping_factor
 
-  def get_intrinsic_reward(self, ids, values):
-    values = torch.from_numpy(values.squeeze(1).copy()).to(torch.float32).to(self.device)
-    alpha = self.life_long_novelty.get_alpha(ids, values)
-    rewards = self.episodic_novelty.get_episodic_intrinsic_reward(ids, values)
+  def input_for_reward(self, values):
+    return torch.from_numpy(values.squeeze(1).copy()).to(torch.float32).to(self.device)
+
+  def get_intrinsic_reward(self, ids, RND_loss, controllabe_state):
+    alpha = self.life_long_novelty.get_alpha(ids, RND_loss)
+    rewards = self.episodic_novelty.get_episodic_intrinsic_reward(ids, controllabe_state)
 
     one = np.ones(alpha.shape)
     clipping_factor = np.empty(alpha.shape)
@@ -84,16 +86,15 @@ class RewardGenerator():
 
 
 class LifeLongNovelty():
-  def __init__(self, batch_size, config: Config, RND_net) -> None:
+  def __init__(self, batch_size, config: Config) -> None:
     self.prev_cal_data = WelfordData(
       count=np.zeros(batch_size, dtype=np.int32),
       mean=np.zeros(batch_size, dtype=np.float32),
       M2=np.zeros(batch_size, dtype=np.float32),
     )
-    self.RND_net = RND_net
 
-  def get_alpha(self, env_ids, values):
-    err = self.RND_net.get_loss(values).cpu().detach().numpy()
+  def get_alpha(self, env_ids, RND_loss):
+    err = RND_loss.cpu().detach().numpy()
 
     self.prev_cal_data = welford_update(self.prev_cal_data, err, env_ids)
     mean, variance, sample_variance = welford_finalize(self.prev_cal_data, env_ids)
@@ -132,7 +133,7 @@ class EpisodicMemory():
 
 
 class EpisodicNovelty():
-  def __init__(self, batch_size, config: Config, embedding_net) -> None:
+  def __init__(self, batch_size, config: Config) -> None:
     self.episodic_memory = EpisodicMemory(batch_size, config)
     self.prev_cal_data = WelfordData(
       count=np.zeros((batch_size, config.num_kernel), dtype=np.int32),
@@ -145,14 +146,11 @@ class EpisodicNovelty():
     self.pseudo_counts_constant = config.kernel_pseudo_counts_constant
     self.maximum_similarity = config.kernel_maximum_similarity
 
-    self.embedding_net = embedding_net
-
   def reset(self, env_ids):
     self.episodic_memory.reset(env_ids)
     self.prev_cal_data.count[env_ids] = 0
 
-  def get_episodic_intrinsic_reward(self, env_ids, value):
-    controllable_state = self.embedding_net(value)
+  def get_episodic_intrinsic_reward(self, env_ids, controllable_state):
     controllable_state = controllable_state.cpu().detach().numpy()
     self.episodic_memory.add(env_ids, controllable_state)
 

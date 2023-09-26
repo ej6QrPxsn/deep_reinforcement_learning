@@ -4,7 +4,7 @@ import torch.nn as nn
 from config import Config
 from data_type import LstmStates, SelectActionOutput
 
-from utils import AgentInput, select_actions, to_agent_input
+from utils import AgentInput
 import torch.nn.functional as F
 
 
@@ -91,6 +91,25 @@ class R2D2Network(nn.Module):
     # batch　* seq -> batch, seq
     return dueling_out.reshape(batch_size, seq_len, *dueling_out.shape[1:]), lstm_states
 
+  def get_qvalue(self, burn_in_input, input: AgentInput):
+    with torch.no_grad():
+      # burn in
+      _, lstm_state = self.forward(burn_in_input)
+
+    # 推論
+    output, _ = self.forward(
+      AgentInput(
+          input.state.clone(),
+          input.prev_action,
+          input.e_prev_reward.clone(),
+          input.i_prev_reward.clone(),
+          input.meta_index,
+          lstm_state
+      )
+    )
+
+    return output
+
 
 class Agent57Network():
 
@@ -127,13 +146,12 @@ class Agent57Network():
   def get_weight(self):
     return self.e_net.get_weight(), self.i_net.get_weight()
 
-  def select_actions(self, agent_input_data, epsilons, beta, batch_size):
-    e_input, i_input = to_agent_input(agent_input_data, self._device)
-    e_qvalues, (e_hidden_state, e_cell_state) = self.e_net(e_input)
-    i_qvalues, (i_hidden_state, i_cell_state) = self.i_net(i_input)
+  def select_actions(self, e_qvalues, e_lstm_states, i_qvalues, i_lstm_states, epsilons, beta, batch_size, action_getter):
+    e_hidden_state, e_cell_state = e_lstm_states
+    i_hidden_state, i_cell_state = i_lstm_states
 
     qvalues = e_qvalues + beta.unsqueeze(-1) * i_qvalues
-    actions, policies = select_actions(qvalues, self._config.action_space, epsilons, self._device, batch_size)
+    actions, policies = action_getter.select_actions(qvalues, epsilons, batch_size)
     qvalues = qvalues.squeeze(1).cpu().detach().numpy().copy(),
 
     return SelectActionOutput(

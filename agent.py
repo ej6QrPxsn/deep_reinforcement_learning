@@ -1,8 +1,8 @@
 import torch
 from config import Config
+from data_type import AgentInput
 from models import R2D2Network, RNDRandomNetwork
 
-from utils import get_agent_input_from_transition
 import torch.optim as optim
 import torch.nn as nn
 
@@ -31,14 +31,30 @@ class R2D2Agent:
   def update_target(self):
     self.target_net.load_state_dict(self.online_net.state_dict())
 
-  def get_qvalues(self, model_input, transitions):
-    # burn in
-    _, online_lstm_state = self.online_net(model_input)
-    _, target_lstm_state = self.target_net(model_input)
+  def get_qvalues(self, model_input, input: AgentInput):
+    with torch.no_grad():
+      # burn in
+      _, online_lstm_state = self.online_net(model_input)
+      _, target_lstm_state = self.target_net(model_input)
 
     # 推論
-    online_input = get_agent_input_from_transition(transitions, online_lstm_state, self._device, self._config)
-    target_input = get_agent_input_from_transition(transitions, target_lstm_state, self._device, self._config)
+    online_input = AgentInput(
+      state=input.state,
+      prev_action=input.prev_action,
+      e_prev_reward=input.e_prev_reward,
+      i_prev_reward=input.i_prev_reward,
+      meta_index=input.meta_index,
+      prev_lstm_state=online_lstm_state
+    )
+
+    target_input = AgentInput(
+      state=input.state.clone(),
+      prev_action=input.prev_action.clone(),
+      e_prev_reward=input.e_prev_reward.clone(),
+      i_prev_reward=input.i_prev_reward.clone(),
+      meta_index=input.meta_index.clone(),
+      prev_lstm_state=target_lstm_state
+    )
 
     online_out, _ = self.online_net(online_input)
     target_out, _ = self.target_net(target_input)
