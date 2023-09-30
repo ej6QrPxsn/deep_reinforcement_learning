@@ -49,8 +49,9 @@ class Config:
   bandit_window_size = 90
   bandit_UCB_beta = 1
   bandit_epsilon = 0.5
-  gamma_min = 0.99
-  gamma_max = 0.997
+  gamma_0 = 0.9999
+  gamma_1 = 0.997
+  gamma_2 = 0.99
 
   # リプレイデータ
   replay_buffer_size = 500000

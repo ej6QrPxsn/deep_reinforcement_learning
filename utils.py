@@ -148,7 +148,15 @@ def get_beta_table(config):
 def get_gamma_table(config):
   table = np.empty(config.num_arms)
   for i in range(config.num_arms):
-    gmax = (config.num_arms - 1 - i) * np.log(1 - config.gamma_max)
-    gmin = i * np.log(1 - config.gamma_min)
-    table[i] = 1 - np.exp((gmax + gmin) / (config.num_arms - 1))
+    if i == 0:
+      table[i] = config.gamma_0
+    elif i < 7:
+      table[i] = config.gamma_1 + (config.gamma_0 - config.gamma_1) * sigmoid(10 * (2 * i - 6) / 6)
+    elif i == 7:
+      table[i] = config.gamma_1
+    else:
+      value1 = (config.num_arms - 9) * np.log(1 - config.gamma_1)
+      value2 = (i - 8) * np.log(1 - config.gamma_2)
+      table[i] = 1 - np.exp((value1 + value2) / (config.num_arms - 9))
+
   return table
