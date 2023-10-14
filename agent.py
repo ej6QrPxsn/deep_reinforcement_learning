@@ -134,7 +134,6 @@ class ActionPredictionNetwork:
         nn.Linear(64, 128),
         nn.ReLU(),
         nn.Linear(128, config.action_space),
-        nn.Softmax(dim=1)
     )
     self._feature.to(device)
 
