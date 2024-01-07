@@ -5,3 +5,4 @@ opencv-python==4.8.0.74
 gymnasium[atari, accept-rom-license]==0.29.0
 zstandard==0.21.0
 tensorboard==2.13.0
+pytest==7.4.0

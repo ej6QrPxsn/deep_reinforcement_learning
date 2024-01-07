@@ -10,5 +10,4 @@ class Config:
   num_head = 8
   num_stack_block = 12
   ffn_dimension = 2048
-  state_size = 84 * 84 * 3 * 160
-
+  state_size = 84 * 84 * 3
