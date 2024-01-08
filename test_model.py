@@ -1,15 +1,15 @@
 import torch
 from config import Config
-from model import DecisionTransformer, Input
+from model import DecisionTransformer, Input, MultiHeadLayer
 
 
-def ready_input(config):
-  reward_input = torch.rand(config.batch_size, config.seq_len, 1)
+def ready_input(config: Config):
+  reward_input = torch.rand(config.batch_size, config.context_length, 1)
   action_input = torch.randint(
-      0, config.action_size, size=(config.batch_size, config.seq_len, 1)).to(torch.float32)
+      0, config.action_size, size=(config.batch_size, config.context_length, 1)).to(torch.float32)
   state_input = torch.rand(
-      config.batch_size, config.seq_len, config.state_size)
-  timstep_input = torch.randint(0, config.seq_len, size=(config.batch_size, config.seq_len, 1))
+      config.batch_size, config.context_length, config.state_size)
+  timstep_input = torch.randint(0, config.context_length, size=(config.batch_size, config.context_length, 1))
   input = Input(
       reward=reward_input,
       action=action_input,
@@ -23,16 +23,57 @@ def ready_input(config):
 def test_init():
   config = Config()
 
+  config.input_type = "text"
   config.batch_size = 7
-  config.seq_len = 2
+  config.context_length = 2
   config.action_size = 4
   config.state_size = 5
-  config.model_dimension = 6
-  config.num_head = 3
+  config.embed_dim = 6
+  config.n_head = 3
 
   input = ready_input(config)
 
   decision_transformer = DecisionTransformer(config)
   emb = decision_transformer.get_embeddings(input)
   torch.testing.assert_close(
-      emb.shape, (config.batch_size, config.seq_len * 3, config.model_dimension))
+      emb.shape, (config.batch_size, config.context_length * 3, config.embed_dim))
+
+
+def test_MultiHeadLayer():
+  config = Config()
+
+  config.input_type = "text"
+  config.batch_size = 7
+  config.context_length = 2
+  config.action_size = 4
+  config.state_size = 5
+  config.embed_dim = 6
+  config.n_head = 3
+
+  input = ready_input(config)
+
+  decision_transformer = DecisionTransformer(config)
+  emb = decision_transformer.get_embeddings(input)
+  multi_head_layer = MultiHeadLayer(config)
+  out = multi_head_layer(emb)
+  torch.testing.assert_close(
+      out.shape, (config.batch_size, config.context_length * 3, config.embed_dim))
+
+
+def test_DecisionTransformer():
+  config = Config()
+
+  config.input_type = "text"
+  config.batch_size = 7
+  config.context_length = 2
+  config.action_size = 4
+  config.state_size = 5
+  config.embed_dim = 6
+  config.n_head = 3
+
+  input = ready_input(config)
+
+  decision_transformer = DecisionTransformer(config)
+  out = decision_transformer(input)
+  torch.testing.assert_close(
+      out.shape, (config.batch_size, config.action_size))
