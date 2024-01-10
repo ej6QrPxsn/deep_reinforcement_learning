@@ -39,19 +39,24 @@ class AtariEnv(Env):
     self.env = gymnasium.make(env_name)
     self.action_space = self.env.action_space.n
 
-    self.lives = 5
     self.frames = None
     self.next_state = None
 
-  def reset(self):
-    self.lives = 5
-
+  def __reset(self):
     #: ゲーム画面を二値化したりトリミングしたりする前処理
     frame = preprocess_frame(self.env.reset()[0])
     #: DQNでは直近4フレームの集合をstateとする
     self.frames = collections.deque(
         [frame] * 4, maxlen=4)
     return np.stack(self.frames, axis=0)
+
+  def reset(self):
+    next_state = self.__reset()
+    return EnvOutput(
+      next_state=next_state,
+      reward=0,
+      done=False,
+    )
 
   def step(self, action) -> EnvOutput:
     next_frame, reward, terminated, truncated, info = self.env.step(action)
@@ -60,7 +65,7 @@ class AtariEnv(Env):
 
     # エピソード終了
     if done:
-      next_state = self.reset()
+      next_state = self.__reset()
     else:
       next_state = np.stack(self.frames, axis=0)
 

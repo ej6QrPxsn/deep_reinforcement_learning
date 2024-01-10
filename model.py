@@ -123,9 +123,10 @@ class MultiHeadLayer(nn.Module):
     # batch, n_head, K_3, K_3
     masked_qk_dot = qk_dot.masked_fill(self.mask[:, :, :K_3, :K_3] == 0, float('-inf'))
     masked_qk_dot = torch.softmax(masked_qk_dot, dim=-1)
-    # batch, n_head, K_3, head_dim -> batch, K_3, embed_dim
+    # batch, n_head, K_3, head_dim
     attention_weight = torch.matmul(masked_qk_dot, v).reshape(batch, K_3, embed_dim)
 
+    #  -> batch, K_3, embed_dim
     # batch, K_3, embed_dim
     out_multi_head = self.linear(attention_weight)
     # batch, K_3 * embed_dim
