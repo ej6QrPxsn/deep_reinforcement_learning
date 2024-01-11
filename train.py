@@ -13,7 +13,7 @@ from env import AtariEnv
 import torch
 from local_buffer import LocalBuffer, Transition
 import multiprocessing as mp
-from model import DecisionTransformer
+from model import DecisionTransformer, Input
 from tqdm import tqdm
 
 
@@ -43,14 +43,14 @@ def write_train_data(data_queue, config):
     if random.random() < 0.7:
       train_writer.write({
           "__key__": key_str,
-          "bytes": data  # ctx.compress(data),
+          "bytes": ctx.compress(data),
       })
       train_count += 1
     # 3割の確率でテストデータ
     else:
       validate_writer.write({
           "__key__": key_str,
-          "bytes": data  # ctx.compress(data),
+          "bytes": ctx.compress(data),
       })
       validate_count += 1
 
@@ -135,15 +135,15 @@ def get_dataset(shard_dir, config, device):
   data_type = DataType(config)
 
   def ready_data(bytes):
-    data = np.frombuffer(bytes,
-                         dtype=data_type.transition_dtype).copy()
+    data = np.frombuffer(dctx.decompress(bytes, max_output_size=data_type.transition_dtype.itemsize),
+                         dtype=data_type.transition_dtype)[0].copy()
     timestep = np.arange(data["timestep"] - config.context_length, data["timestep"])
 
-    return (
-      torch.from_numpy(data["rtg"].astype(np.float32)).clone().to(device),
-      torch.from_numpy(data["state"].astype(np.float32)).clone().to(device),
-      torch.from_numpy(data["action"].astype(np.float32)).clone().to(device),
-      torch.from_numpy(timestep).to(device),
+    return Input(
+      rtg=torch.from_numpy(data["rtg"].astype(np.float32)).unsqueeze(-1).clone().to(device),
+      state=torch.from_numpy(data["state"].astype(np.float32)).clone().to(device),
+      action=torch.from_numpy(data["action"].astype(np.float32)).unsqueeze(-1).clone().to(device),
+      timestep=torch.from_numpy(timestep).unsqueeze(-1).to(device),
     )
 
   dataset = wds.WebDataset(shards_list)
@@ -171,9 +171,9 @@ def train_loop(config: Config):
   # training loop
   for _ in range(config.max_epochs):
     for ret in dataloader:
-      R, s, a, t = ret[0]
-      a_preds = decision_transformer(R, s, a, t)
-      loss = torch.mean((a_preds - a[:, -1])**2)
+      data = ret[0]
+      a_preds = decision_transformer(data)
+      loss = torch.mean((a_preds - data.action[:, -1])**2)
       optimizer.zero_grad()
       loss.backward()
       optimizer.step()

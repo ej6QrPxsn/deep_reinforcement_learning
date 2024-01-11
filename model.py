@@ -14,7 +14,7 @@ class InputWeights(NamedTuple):
 
 
 class Input(NamedTuple):
-  reward: torch.Tensor
+  rtg: torch.Tensor
   state: torch.Tensor
   action: torch.Tensor
   timestep: int
@@ -57,9 +57,12 @@ class DecisionTransformer(nn.Module):
     # input(batch, K, value)
     pos_encoding = self.embed_t(torch.sign(input.timestep / self.config.embed_dim))
     # batch, K, embed_diminput
-    embed_s = self.embed_s(input.state) + pos_encoding
+    if self.config.input_type == "image":
+      embed_s = self.embed_s(input.state.reshape(-1, *input.state.shape[2:])) + pos_encoding
+    else:
+      embed_s = self.embed_s(input.state) + pos_encoding
     embed_a = self.embed_a(input.action) + pos_encoding
-    embed_R = self.embed_R(input.reward) + pos_encoding
+    embed_R = self.embed_R(input.rtg) + pos_encoding
 
     # interleave tokens as (R_1 , s_1 , a_1 , ... , R_K , s_K )
     # batch, 3K, embed_dim

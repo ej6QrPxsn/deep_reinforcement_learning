@@ -11,7 +11,7 @@ def ready_input(config: Config):
       config.batch_size, config.context_length, config.state_size)
   timstep_input = torch.randint(0, config.context_length, size=(config.batch_size, config.context_length, 1))
   input = Input(
-      reward=reward_input,
+      rtg=reward_input,
       action=action_input,
       state=state_input,
       timestep=timstep_input
