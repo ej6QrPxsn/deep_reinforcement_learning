@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import random
+import gymnasium
 import zstandard as zstd
 import numpy as np
 import torch
@@ -15,6 +16,7 @@ from local_buffer import LocalBuffer, Transition
 import multiprocessing as mp
 from model import DecisionTransformer, Input
 from tqdm import tqdm
+import torch.nn.functional as F
 
 
 def write_train_data(data_queue, config):
@@ -172,14 +174,25 @@ def train_loop(config: Config):
   for _ in range(config.max_epochs):
     for ret in dataloader:
       data = ret[0]
-      a_preds = decision_transformer(data)
-      loss = torch.mean((a_preds - data.action[:, -1])**2)
+      logits = decision_transformer(data)
+
+      # 期待値をone-hotにする
+      targets = F.one_hot(data.action.to(torch.int64), num_classes=config.action_size)
+      targets = targets.squeeze(2).to(torch.float32)
+
+      loss = F.cross_entropy(logits, targets)
       optimizer.zero_grad()
       loss.backward()
       optimizer.step()
 
 
+def set_action_space(config):
+  env = gymnasium.make(config.env_name)
+  config.action_size = env.action_space.n
+
+
 if __name__ == "__main__":
   config = Config()
+  set_action_space(config)
   create_dataset(config)
   train_loop(config)

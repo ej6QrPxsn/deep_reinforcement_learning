@@ -1,5 +1,4 @@
-import math
-from typing import List, NamedTuple
+from typing import NamedTuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,7 +57,9 @@ class DecisionTransformer(nn.Module):
     pos_encoding = self.embed_t(torch.sign(input.timestep / self.config.embed_dim))
     # batch, K, embed_diminput
     if self.config.input_type == "image":
-      embed_s = self.embed_s(input.state.reshape(-1, *input.state.shape[2:])) + pos_encoding
+      batch, seq = input.state.size()[:2]
+      embed_s = self.embed_s(input.state.reshape(-1, *input.state.shape[2:]))
+      embed_s = embed_s.reshape(batch, seq, -1) + pos_encoding
     else:
       embed_s = self.embed_s(input.state) + pos_encoding
     embed_a = self.embed_a(input.action) + pos_encoding
@@ -78,8 +79,8 @@ class DecisionTransformer(nn.Module):
     batch, K_3, embed_dim = embeddings.size()
     # アクションのみ使う
     # batch, 3K, embed_dim -> batch, 3, K, embed_dim
-    action = self.action_linear(output.reshape(batch, 3, -1, embed_dim)[:, -1, -1])
-    # batch, action_size
+    action = self.action_linear(output.reshape(batch, 3, -1, embed_dim)[:, -1])
+    # batch, K, action_size
     return action
 
 

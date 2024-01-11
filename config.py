@@ -10,7 +10,7 @@ class Config:
   # n_steps = 2 * 500000 * context_length // n_envs
   n_steps = 100 * context_length
 
-  batch_size = 128
+  batch_size = 3
   action_size = 3
   input_type = "image"
 
