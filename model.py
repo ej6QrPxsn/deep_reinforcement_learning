@@ -51,6 +51,9 @@ class DecisionTransformer(nn.Module):
     self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
 
     self.blocks = nn.Sequential(*[CasualTransformerBlock(config) for _ in range(config.n_block)])
+    self.drop = nn.Dropout(config.embed_drop)
+
+    self.action_norm = nn.LayerNorm(config.embed_dim)
 
   def get_embeddings(self, input):
     # input(batch, K, value)
@@ -73,10 +76,13 @@ class DecisionTransformer(nn.Module):
     embeddings = self.get_embeddings(input)
 
     # batch, 3K, embed_dim
-    output = self.blocks(embeddings)
+    output = self.blocks(self.drop(embeddings))
     # batch, 3K, embed_dim
 
     batch, K_3, embed_dim = embeddings.size()
+
+    output = self.action_norm(output)
+
     # アクションのみ使う
     # batch, 3K, embed_dim -> batch, 3, K, embed_dim
     action = self.action_linear(output.reshape(batch, 3, -1, embed_dim)[:, -1])

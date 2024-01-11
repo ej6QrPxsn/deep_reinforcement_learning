@@ -17,6 +17,7 @@ import multiprocessing as mp
 from model import DecisionTransformer, Input
 from tqdm import tqdm
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 
 
 def write_train_data(data_queue, config):
@@ -159,6 +160,7 @@ def get_dataset(shard_dir, config, device):
 
 def train_loop(config: Config):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  summary_writer = SummaryWriter("logs")
 
   dataset = get_dataset(config.train_data_dir, config, device)
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=config.batch_size, num_workers=4)
@@ -169,6 +171,8 @@ def train_loop(config: Config):
       lr=config.adam_lr,
       betas=config.adam_beta,
   )
+
+  total_steps = 0
 
   # training loop
   for _ in range(config.max_epochs):
@@ -184,6 +188,10 @@ def train_loop(config: Config):
       optimizer.zero_grad()
       loss.backward()
       optimizer.step()
+
+      total_steps += 1
+
+      summary_writer.add_scalar("loss", loss, total_steps)
 
 
 def set_action_space(config):

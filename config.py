@@ -35,6 +35,7 @@ class Config:
   shard_size = 50 * 1000 * 1000
   data_queue_max_size = 1000
   max_epochs = 5
+  embed_drop = 0.1
 
   # 最適化
   adam_lr = 6 * 10 ** -4
