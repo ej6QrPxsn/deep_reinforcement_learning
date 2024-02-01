@@ -47,7 +47,9 @@ class DecisionTransformer(nn.Module):
                                              out_features=config.embed_dim, bias=False), nn.Tanh())
     self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
     self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
-    self.embed_t = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False))
+
+    self.pos_emb = nn.Parameter(torch.zeros(1, config.context_length + 1, config.embed_dim))
+    self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep + 1, config.embed_dim))
 
     self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
 
@@ -57,25 +59,33 @@ class DecisionTransformer(nn.Module):
     self.action_norm = nn.LayerNorm(config.embed_dim)
 
   def get_embeddings(self, input):
-    # input(batch, K, value)
-    pos_encoding = self.embed_t(torch.sign(input.timestep / self.config.embed_dim))
-    # batch, K, embed_diminput
+
     if self.config.input_type == "image":
       batch, seq = input.state.size()[:2]
       embed_s = self.embed_s(input.state.reshape(-1, *input.state.shape[2:]))
-      embed_s = embed_s.reshape(batch, seq, -1) + pos_encoding
+      embed_s = embed_s.reshape(batch, seq, -1)
     else:
-      embed_s = self.embed_s(input.state) + pos_encoding
-    embed_a = self.embed_a(input.action) + pos_encoding
-    embed_R = self.embed_R(input.rtg) + pos_encoding
+      embed_s = self.embed_s(input.state)
+    embed_a = self.embed_a(input.action)
+    embed_R = self.embed_R(input.rtg)
 
-    # interleave tokens as (R_1 , s_1 , a_1 , ... , R_K , s_K )
-    # batch, 3K, embed_dim
-    tokens = torch.empty(embed_s.shape[0], embed_s.shape[1] * 3, embed_s.shape[2]).to(self.device)
-    tokens[:, 0::3, :] = embed_R
-    tokens[:, 1::3, :] = embed_s
-    tokens[:, 2::3, :] = embed_a
-    return tokens
+    embed_token = torch.empty(embed_s.shape[0], embed_s.shape[1] * 3, embed_s.shape[2]).to(self.device)
+    embed_token[:, 0::3, :] = embed_R
+    embed_token[:, 1::3, :] = embed_s
+    embed_token[:, 2::3, :] = embed_a
+
+    batch_size = input.state.size()[0]
+
+    all_global_pos_emb = torch.repeat_interleave(self.global_pos_emb, batch_size, dim=0)  # batch_size, traj_length, n_embd
+
+    a = torch.repeat_interleave(input.timestep, self.config.embed_dim, dim=-1)
+    print(a.shape)
+    print(all_global_pos_emb.shape)
+    b = torch.gather(all_global_pos_emb, 1, a)
+    c = b + self.pos_emb[:, :embed_token.shape[1], :]
+    pos_encoding = c
+
+    return embed_token + pos_encoding
 
   def forward(self, input: Input):
     embeddings = self.get_embeddings(input)

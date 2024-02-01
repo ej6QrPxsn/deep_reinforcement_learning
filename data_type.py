@@ -10,6 +10,7 @@ class DataType():
         ("state", "u1", config.state_shape),
         ("action", "u1"),
         ("reward", "f4"),
+        ("done", "f4"),
     ])
 
     self.transition_dtype = np.dtype([

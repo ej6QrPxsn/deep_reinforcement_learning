@@ -1,8 +1,15 @@
 
 
 class Config:
+  # env_name = "PitfallDeterministic-v4"
   env_name = "BreakoutDeterministic-v4"
-  checkpoint_path = "checkpoint_path.pth"
+  checkpoint_path = "checkpoint.pth"
+  n_workers = 2
+
+  min_replay_size = 100000
+  replay_size = 500000
+
+  n_loads = 10
 
   # 訓練データの割合
   train_date_ratio = 1
@@ -10,11 +17,11 @@ class Config:
   # 環境実行プロセス数
   n_envs = 10
   context_length = 90
+  max_timestep = 100000
 
   n_steps = 2 * 500000 * context_length // n_envs
-  # n_steps = 1000 * context_length
 
-  n_val_episode = 10
+  n_val_episode = 1000
   batch_size = 32
   action_size = 3
   input_type = "image"
@@ -26,7 +33,7 @@ class Config:
   n_head = 8
   n_block = 6
   ffn_dim = 2048
-  state_size = 84 * 84 * 4
+  state_size = 4 * 84 * 84
 
   # 1アクターで実行する環境数
   n_env_batches = 1
@@ -46,4 +53,4 @@ class Config:
   adam_lr = 6 * 10 ** -4
   adam_beta = (0.9, 0.95)
   grad_norm_clip = 1.0
-  use_amp = True
+  use_amp = False
