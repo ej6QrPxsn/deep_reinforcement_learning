@@ -1,4 +1,5 @@
 import datetime as dt
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,6 @@ from config import Config
 import webdataset as wds
 from data_type import DataType
 from env import AtariEnv
-import torch
 from local_buffer import LocalBuffer, Transition
 import multiprocessing as mp
 from model import DecisionTransformer, Input
@@ -37,19 +37,19 @@ def write_train_data(data_queue, config):
   ctx = zstd.ZstdCompressor()
 
   data: Transition = data_queue.get()
-  while data:
+  end_count = 0
+
+  while True:
     now = dt.datetime.now()
     time = now.strftime("%Y%m%d-%H%M%S-%f")
     key_str = time
 
-    # 7割の確率で訓練データ
-    if random.random() < 0.7:
+    if random.random() < config.train_date_ratio:
       train_writer.write({
           "__key__": key_str,
           "bytes": ctx.compress(data),
       })
       train_count += 1
-    # 3割の確率でテストデータ
     else:
       validate_writer.write({
           "__key__": key_str,
@@ -59,6 +59,10 @@ def write_train_data(data_queue, config):
 
     # 空データで終了
     data = data_queue.get()
+    if not data:
+      end_count += 1
+      if end_count == config.n_envs:
+        break
 
   last_write_data(train_count, validate_count, config)
   print("write_train_data end")
@@ -123,75 +127,157 @@ def create_dataset(config: Config):
     p.join()
 
 
-def get_dataset(shard_dir, config, device):
+def ready_data(context_length, data_type, device, bytes):
+  dctx = zstd.ZstdDecompressor()
+  data = np.frombuffer(dctx.decompress(bytes, max_output_size=data_type.transition_dtype.itemsize),
+                       dtype=data_type.transition_dtype)[0].copy()
+  timestep = np.arange(data["timestep"] - context_length, data["timestep"])
 
-  def info_from_json(shard_dir):
-    with open(Path(shard_dir) / 'dataset-size.json', 'r') as f:
-      info_dic = json.load(f)
-    return info_dic['dataset size']
+  return Input(
+    rtg=torch.from_numpy(data["rtg"].astype(np.float32)).unsqueeze(-1).clone().to(device),
+    state=torch.from_numpy(data["state"].astype(np.float32) / 255.).clone().to(device),
+    action=torch.from_numpy(data["action"].astype(np.float32)).unsqueeze(-1).clone().to(device),
+    timestep=torch.from_numpy(timestep).unsqueeze(-1).to(device),
+  )
+
+
+def get_dataset(shard_dir, data_type, device):
 
   shards_list = [
       str(path) for path in Path(shard_dir).glob('*.tar')
   ]
 
-  dctx = zstd.ZstdDecompressor()
-  data_type = DataType(config)
-
-  def ready_data(bytes):
-    data = np.frombuffer(dctx.decompress(bytes, max_output_size=data_type.transition_dtype.itemsize),
-                         dtype=data_type.transition_dtype)[0].copy()
-    timestep = np.arange(data["timestep"] - config.context_length, data["timestep"])
-
-    return Input(
-      rtg=torch.from_numpy(data["rtg"].astype(np.float32)).unsqueeze(-1).clone().to(device),
-      state=torch.from_numpy(data["state"].astype(np.float32)).clone().to(device),
-      action=torch.from_numpy(data["action"].astype(np.float32)).unsqueeze(-1).clone().to(device),
-      timestep=torch.from_numpy(timestep).unsqueeze(-1).to(device),
-    )
+  data_func = partial(
+      ready_data,
+      config.context_length, data_type, device)
 
   dataset = wds.WebDataset(shards_list)
   dataset = dataset.to_tuple("bytes")
-  dataset = dataset.map_tuple(ready_data)
-  dataset_size = info_from_json(shard_dir)
-  dataset = dataset.with_length(dataset_size)
+  dataset = dataset.map_tuple(data_func)
 
   return dataset
 
 
+def info_from_json(shard_dir):
+  with open(Path(shard_dir) / 'dataset-size.json', 'r') as f:
+    info_dic = json.load(f)
+  return int(info_dic['dataset size'])
+
+
 def train_loop(config: Config):
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
+  device = torch.device(device_type)
   summary_writer = SummaryWriter("logs")
 
-  dataset = get_dataset(config.train_data_dir, config, device)
+  data_type = DataType(config)
+
+  dataset = get_dataset(config.train_data_dir, data_type, device)
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=config.batch_size, num_workers=4)
 
-  decision_transformer = DecisionTransformer(config)
-  optimizer = torch.optim.Adam(
-      params=decision_transformer.parameters(),
+  net = DecisionTransformer(config, device).to(device)
+  net.train()
+
+  opt = torch.optim.Adam(
+      params=net.parameters(),
       lr=config.adam_lr,
       betas=config.adam_beta,
   )
+  scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp)
 
   total_steps = 0
 
-  # training loop
-  for _ in range(config.max_epochs):
-    for ret in dataloader:
+  dataset_size = info_from_json(config.train_data_dir)
+  total = dataset_size // config.batch_size
+  total = 2 * 500000 // config.batch_size
+
+  epoch_pbar = tqdm(range(config.max_epochs))
+  for _ in epoch_pbar:
+    pbar = tqdm(dataloader, total=total)
+    for ret in pbar:
       data = ret[0]
-      logits = decision_transformer(data)
 
-      # 期待値をone-hotにする
-      targets = F.one_hot(data.action.to(torch.int64), num_classes=config.action_size)
-      targets = targets.squeeze(2).to(torch.float32)
+      with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
+        logits = net(data)
+        loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), data.action.to(torch.int64).reshape(-1))
+        loss = loss.mean()
 
-      loss = F.cross_entropy(logits, targets)
-      optimizer.zero_grad()
-      loss.backward()
-      optimizer.step()
+      scaler.scale(loss).backward()
+
+      # Unscales the gradients of optimizer's assigned parameters in-place
+      scaler.unscale_(opt)
+
+      # Since the gradients of optimizer's assigned parameters are now unscaled, clips as usual.
+      # You may use the same value for max_norm here as you would without gradient scaling.
+      torch.nn.utils.clip_grad_norm_(net.parameters(), config.grad_norm_clip)
+
+      scaler.step(opt)
+      scaler.update()
+      opt.zero_grad()  # set_to_none=True here can modestly improve performance
 
       total_steps += 1
 
-      summary_writer.add_scalar("loss", loss, total_steps)
+      summary_writer.add_scalar("train/loss", loss, total_steps)
+
+      if total_steps % 100 == 0:
+        checkpoint = {"model": net.cpu().state_dict(),
+                      "optimizer": opt.state_dict(),
+                      "scaler": scaler.state_dict()}
+        torch.save(checkpoint, config.checkpoint_path)
+        net.to(device)
+
+
+def validate_loop(config: Config):
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  summary_writer = SummaryWriter("logs")
+
+  env = AtariEnv(config.env_name)
+  net = DecisionTransformer(config, device).to(device)
+  net.eval()
+
+  if os.path.exists(config.checkpoint_path):
+    checkpoint = torch.load(config.checkpoint_path)
+    net.load_state_dict(checkpoint["model"])
+
+  target_return = 90
+  R, s, a, t, done = target_return, env.reset().next_state, 0, 1, False
+
+  total_steps = 0
+  tensor_R = torch.empty(1, 1, 1).to(device)
+  tensor_s = torch.empty(1, 1, *config.state_shape).to(device)
+  tensor_a = torch.empty(1, 1, 1).to(device)
+  tensor_t = torch.empty(1, 1, 1).to(device)
+
+  for i in range(config.n_val_episode):
+    episode_reward = 0
+    t = 1
+    while not done:
+      tensor_R[:] = R
+      tensor_s[:] = torch.from_numpy(s)
+      tensor_a[:] = a
+      tensor_t[:] = t
+      input = Input(
+        rtg=tensor_R,
+        state=tensor_s,
+        action=tensor_a,
+        timestep=tensor_t,
+      )
+
+      with torch.no_grad():
+        preds = net(input)
+      probs = F.softmax(preds, dim=2)
+      action = probs.argmax(2).item()
+      env_output = env.step(action)
+
+      R = R - env_output.reward
+      s = env_output.next_state
+      a = action
+      t += 1
+      done = env_output.done
+
+      episode_reward += env_output.reward
+      total_steps += 1
+
+    summary_writer.add_scalar("validate/reward", episode_reward, total_steps)
 
 
 def set_action_space(config):
@@ -200,7 +286,11 @@ def set_action_space(config):
 
 
 if __name__ == "__main__":
+  mp.set_start_method("spawn")  # set start method to "spawn" BEFORE instantiating the queue and the event
+
   config = Config()
   set_action_space(config)
-  create_dataset(config)
+
+  # create_dataset(config)
   train_loop(config)
+  validate_loop(config)

@@ -8,16 +8,21 @@ Decision TransformerをPytorchで実装しています。
 
 * [Decision Transformer: Outperforming the Atari Human Benchmark](https://arxiv.org/abs/2106.01345)
 
+### 公式実装
+* [Decision Transformer](https://github.com/kzl/decision-transformer/tree/master)
+
 ## 実行準備
 
 ```
-pip install -r requirements.txt
+docker image build -t drl_ubuntu .
+docker run --name drl-container -it drl_ubuntu /bin/bash
 ```
+または、devcontainerを使う場合は、devcontainerをインストールして起動
 
 ## 実行
 
 ```
-python main.py
+python3 train.py
 ```
 
 ## 結果

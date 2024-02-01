@@ -34,7 +34,7 @@ class LocalBuffer:
     self.transition["rtg"][0][:] = total_rewards
     self.transition["timestep"][0] = self._episode_count
 
-    self._data_queue.put(self.transition.tobytes())
+    self._data_queue.put(self.transition[0].tobytes())
 
   def add(self, state, reward, action, done):
     self._work_transition["state"][self._index] = state

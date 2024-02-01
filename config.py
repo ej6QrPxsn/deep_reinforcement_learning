@@ -2,15 +2,20 @@
 
 class Config:
   env_name = "BreakoutDeterministic-v4"
+  checkpoint_path = "checkpoint_path.pth"
+
+  # 訓練データの割合
+  train_date_ratio = 1
 
   # 環境実行プロセス数
-  n_envs = 1
+  n_envs = 10
   context_length = 90
 
-  # n_steps = 2 * 500000 * context_length // n_envs
-  n_steps = 100 * context_length
+  n_steps = 2 * 500000 * context_length // n_envs
+  # n_steps = 1000 * context_length
 
-  batch_size = 3
+  n_val_episode = 10
+  batch_size = 32
   action_size = 3
   input_type = "image"
 
@@ -40,3 +45,5 @@ class Config:
   # 最適化
   adam_lr = 6 * 10 ** -4
   adam_beta = (0.9, 0.95)
+  grad_norm_clip = 1.0
+  use_amp = True

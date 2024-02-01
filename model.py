@@ -20,10 +20,11 @@ class Input(NamedTuple):
 
 
 class DecisionTransformer(nn.Module):
-  def __init__(self, config: Config) -> None:
+  def __init__(self, config: Config, device) -> None:
     super(DecisionTransformer, self).__init__()
 
     self.config = config
+    self.device = device
 
     if config.input_type == "image":
       self.embed_s = nn.Sequential(
@@ -42,15 +43,15 @@ class DecisionTransformer(nn.Module):
           nn.Tanh(),
       )
     else:
-      self.embed_s = nn.Linear(in_features=config.state_size,
-                               out_features=config.embed_dim, bias=False)
-    self.embed_a = nn.Linear(in_features=1, out_features=config.embed_dim, bias=False)
-    self.embed_R = nn.Linear(in_features=1, out_features=config.embed_dim, bias=False)
-    self.embed_t = nn.Linear(in_features=1, out_features=config.embed_dim, bias=False)
+      self.embed_s = nn.Sequential(nn.Linear(in_features=config.state_size,
+                                             out_features=config.embed_dim, bias=False), nn.Tanh())
+    self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
+    self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
+    self.embed_t = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False))
 
     self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
 
-    self.blocks = nn.Sequential(*[CasualTransformerBlock(config) for _ in range(config.n_block)])
+    self.blocks = nn.Sequential(*[CasualTransformerBlock(config, device) for _ in range(config.n_block)])
     self.drop = nn.Dropout(config.embed_drop)
 
     self.action_norm = nn.LayerNorm(config.embed_dim)
@@ -70,7 +71,11 @@ class DecisionTransformer(nn.Module):
 
     # interleave tokens as (R_1 , s_1 , a_1 , ... , R_K , s_K )
     # batch, 3K, embed_dim
-    return torch.cat((embed_R, embed_s, embed_a), dim=1)
+    tokens = torch.empty(embed_s.shape[0], embed_s.shape[1] * 3, embed_s.shape[2]).to(self.device)
+    tokens[:, 0::3, :] = embed_R
+    tokens[:, 1::3, :] = embed_s
+    tokens[:, 2::3, :] = embed_a
+    return tokens
 
   def forward(self, input: Input):
     embeddings = self.get_embeddings(input)
@@ -84,26 +89,35 @@ class DecisionTransformer(nn.Module):
     output = self.action_norm(output)
 
     # アクションのみ使う
-    # batch, 3K, embed_dim -> batch, 3, K, embed_dim
-    action = self.action_linear(output.reshape(batch, 3, -1, embed_dim)[:, -1])
+    # batch, 3K, embed_dim -> batch, K, embed_dim
+    action_out = output[:, 2::3, :]
+
+    action = self.action_linear(action_out)
     # batch, K, action_size
+
     return action
 
 
 class CasualTransformerBlock(nn.Module):
-  def __init__(self, config: Config) -> None:
+  def __init__(self, config: Config, device) -> None:
     super(CasualTransformerBlock, self).__init__()
 
-    self.multi_head_layer = MultiHeadLayer(config)
+    self.multi_head_layer = MultiHeadLayer(config, device)
     self.ffn_layer = FFNLayer(config)
+    self.norm1 = nn.LayerNorm(config.embed_dim)
+    self.norm2 = nn.LayerNorm(config.embed_dim)
 
-  def forward(self, input):
-    out1 = self.multi_head_layer(input)
-    return self.ffn_layer(out1)
+  def forward(self, x):
+    x = x + self.multi_head_layer(x)
+    x = self.norm1(x)
+    x = x + self.ffn_layer(x)
+    x = self.norm2(x)
+
+    return x
 
 
 class MultiHeadLayer(nn.Module):
-  def __init__(self, config: Config) -> None:
+  def __init__(self, config: Config, device) -> None:
     super(MultiHeadLayer, self).__init__()
 
     self.config = config
@@ -117,7 +131,8 @@ class MultiHeadLayer(nn.Module):
     self.value = nn.Linear(in_features=config.embed_dim, out_features=config.embed_dim)
 
     self.linear = nn.Linear(in_features=config.embed_dim, out_features=config.embed_dim)
-    self.norm = nn.LayerNorm(config.embed_dim)
+
+    self.mask_value = torch.tensor(float("-inf")).to(torch.float16).to(device)
 
   def forward(self, input):
     batch, K_3, embed_dim = input.size()
@@ -129,20 +144,19 @@ class MultiHeadLayer(nn.Module):
     # batch, n_head, K_3, head_dim
 
     # batch, n_head, K_3, head_dim × batch, n_head, head_dim, K
-    qk_dot = torch.matmul(q, torch.transpose(k, -1, -2))
+    x = torch.matmul(q, torch.transpose(k, -1, -2))
     # batch, n_head, K_3, K_3
-    masked_qk_dot = qk_dot.masked_fill(self.mask[:, :, :K_3, :K_3] == 0, float('-inf'))
-    masked_qk_dot = torch.softmax(masked_qk_dot, dim=-1)
+    x = x.masked_fill(self.mask[:, :, :K_3, :K_3] == 0, self.mask_value)
+    x = torch.softmax(x, dim=-1)
     # batch, n_head, K_3, head_dim
-    attention_weight = torch.matmul(masked_qk_dot, v).reshape(batch, K_3, embed_dim)
+    x = torch.matmul(x, v).reshape(batch, K_3, embed_dim)
 
     #  -> batch, K_3, embed_dim
     # batch, K_3, embed_dim
-    out_multi_head = self.linear(attention_weight)
+    x = self.linear(x)
     # batch, K_3 * embed_dim
-    out = self.norm(input + out_multi_head)
 
-    return out.reshape(batch, K_3, embed_dim)
+    return x.reshape(batch, K_3, embed_dim)
 
 
 class FFNLayer(nn.Module):
@@ -151,13 +165,10 @@ class FFNLayer(nn.Module):
 
     self.linear1 = nn.Linear(in_features=config.embed_dim, out_features=config.ffn_dim)
     self.linear2 = nn.Linear(in_features=config.ffn_dim, out_features=config.embed_dim)
-    self.norm = nn.LayerNorm(config.embed_dim)
 
-  def forward(self, input):
-    out_ffn1 = F.relu(self.linear1(input))
-    input_ffn2 = torch.where(out_ffn1 < 0, 0, out_ffn1)
-    out_ffn2 = self.linear2(input_ffn2)
-
-    out = self.norm(input + out_ffn2)
+  def forward(self, x):
+    x = F.relu(self.linear1(x))
+    x = torch.where(x < 0, 0, x)
+    out = self.linear2(x)
 
     return out

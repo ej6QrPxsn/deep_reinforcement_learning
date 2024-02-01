@@ -21,6 +21,7 @@ def ready_input(config: Config):
 
 
 def test_init():
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   config = Config()
 
   config.input_type = "text"
@@ -33,13 +34,14 @@ def test_init():
 
   input = ready_input(config)
 
-  decision_transformer = DecisionTransformer(config)
+  decision_transformer = DecisionTransformer(config, device)
   emb = decision_transformer.get_embeddings(input)
   torch.testing.assert_close(
       emb.shape, (config.batch_size, config.context_length * 3, config.embed_dim))
 
 
 def test_MultiHeadLayer():
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   config = Config()
 
   config.input_type = "text"
@@ -52,7 +54,7 @@ def test_MultiHeadLayer():
 
   input = ready_input(config)
 
-  decision_transformer = DecisionTransformer(config)
+  decision_transformer = DecisionTransformer(config, device)
   emb = decision_transformer.get_embeddings(input)
   multi_head_layer = MultiHeadLayer(config)
   out = multi_head_layer(emb)
@@ -61,6 +63,7 @@ def test_MultiHeadLayer():
 
 
 def test_DecisionTransformer():
+  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   config = Config()
 
   config.input_type = "text"
@@ -73,7 +76,7 @@ def test_DecisionTransformer():
 
   input = ready_input(config)
 
-  decision_transformer = DecisionTransformer(config)
+  decision_transformer = DecisionTransformer(config, device)
   out = decision_transformer(input)
   torch.testing.assert_close(
       out.shape, (config.batch_size, config.action_size))
