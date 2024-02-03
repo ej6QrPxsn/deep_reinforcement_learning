@@ -6,13 +6,19 @@ class Config:
   checkpoint_path = "checkpoint.pth"
   n_workers = 2
 
-  min_replay_size = 100000
+  min_replay_size = 25000
   replay_size = 500000
 
+  # データ読み込みプロセス数
   n_loads = 10
 
   # 訓練データの割合
   train_date_ratio = 1
+
+  n_val_episode = 1000
+  batch_size = 32
+  action_size = 3
+  input_type = "image"
 
   # 環境実行プロセス数
   n_envs = 10
@@ -20,11 +26,7 @@ class Config:
   max_timestep = 100000
 
   n_steps = 2 * 500000 * context_length // n_envs
-
-  n_val_episode = 1000
-  batch_size = 32
-  action_size = 3
-  input_type = "image"
+  train_steps = (2 * 500000 - context_length) // batch_size
 
   in_feature = 32
   # seq_len * (rtg, state, action)

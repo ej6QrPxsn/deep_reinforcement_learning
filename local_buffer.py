@@ -36,7 +36,7 @@ class LocalBuffer:
     else:
       self.transition["timestep"][0] = 0
 
-    return self.transition[0].tobytes()
+    return self.transition.tobytes()
 
   def add(self, tansition: Transition):
     self._work_transition["state"][self._index] = tansition.state

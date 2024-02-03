@@ -33,14 +33,9 @@ def env_loop(id, config: Config):
 
   time.sleep(10)
 
-  if id == 0:
-    pber = tqdm(range(config.n_steps))
-  else:
-    pber = range(config.n_steps)
-
   writer = DataWriter(id, config)
 
-  for i in pber:
+  for i in range(config.n_steps):
     action = rng.integers(env.action_space)
     env_output = env.step(action)
 
@@ -98,12 +93,7 @@ def load_loop(id, data_queue, data_type, config):
 
   data_it = iter(dataloader)
 
-  if id == 0:
-    pber = tqdm(range(total))
-  else:
-    pber = range(total)
-
-  for _ in pber:
+  for _ in range(total):
     byte_data = next(data_it)[0][0]
     # ファイルから解凍して読み込み
     a = dctx.decompress(byte_data)
@@ -117,7 +107,7 @@ def load_loop(id, data_queue, data_type, config):
   dataset.close()
 
 
-def train_loop(config: Config):
+def run_train_epoch(config: Config, weight_lock):
   device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
   device = torch.device(device_type)
   summary_writer = SummaryWriter("logs")
@@ -133,6 +123,12 @@ def train_loop(config: Config):
       betas=config.adam_beta,
   )
   scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp)
+
+  if os.path.exists(config.checkpoint_path):
+    checkpoint = torch.load(config.checkpoint_path)
+    net.load_state_dict(checkpoint["model"])
+    opt.load_state_dict(checkpoint["optimizer"])
+    scaler.load_state_dict(checkpoint["scaler"])
 
   total_steps = 0
   sample_queue = mp.Queue()
@@ -151,21 +147,19 @@ def train_loop(config: Config):
     p.start()
     processes.append(p)
 
-  while True:
-    data = sample_queue.get()
-    if data is None:
-      break
+  data = sample_queue.get()
+  while data is not None:
 
     input = Input(
-      rtg=torch.from_numpy(data["rtg"].astype(np.float32)).unsqueeze(-1).clone().to(device),
-      state=torch.from_numpy(data["state"].astype(np.float32) / 255.).clone().to(device),
-      action=torch.from_numpy(data["action"].astype(np.float32)).unsqueeze(-1).clone().to(device),
-      timestep=torch.from_numpy(data["timestep"]).unsqueeze(-1).to(device),
+      rtg=torch.from_numpy(data["rtg"].astype(np.float32).copy()).unsqueeze(-1).to(device),
+      state=torch.from_numpy(data["state"].astype(np.float32).copy() / 255.).to(device),
+      action=torch.from_numpy(data["action"].astype(np.float32).copy()).unsqueeze(-1).to(device),
+      timestep=torch.from_numpy(data["timestep"].astype(np.int64).copy()).reshape(-1, 1, 1).to(device),
     )
 
     with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
       logits = net(input)
-      loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), data.action.to(torch.int64).reshape(-1))
+      loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), input.action.to(torch.int64).reshape(-1))
       loss = loss.mean()
 
     scaler.scale(loss).backward()
@@ -184,16 +178,19 @@ def train_loop(config: Config):
     total_steps += 1
     summary_writer.add_scalar("train/loss", loss, total_steps)
 
-    if total_steps % 100 == 0:
+    if total_steps % 10 == 0:
 
       checkpoint = {"model": net.cpu().state_dict(),
                     "optimizer": opt.state_dict(),
                     "scaler": scaler.state_dict()}
-      torch.save(checkpoint, config.checkpoint_path)
+      with weight_lock:
+        torch.save(checkpoint, config.checkpoint_path)
       net.to(device)
 
+    data = sample_queue.get()
 
-def validate_loop(config: Config):
+
+def validate_loop(config: Config, weight_lock):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   summary_writer = SummaryWriter("logs")
 
@@ -201,9 +198,14 @@ def validate_loop(config: Config):
   net = DecisionTransformer(config, device).to(device)
   net.eval()
 
-  if os.path.exists(config.checkpoint_path):
-    checkpoint = torch.load(config.checkpoint_path)
-    net.load_state_dict(checkpoint["model"])
+  # 訓練が始まるまでループ
+  while True:
+    if os.path.exists(config.checkpoint_path):
+      checkpoint = torch.load(config.checkpoint_path)
+      net.load_state_dict(checkpoint["model"])
+      break
+    else:
+      time.sleep(10)
 
   target_return = 90
   R, s, a, t, done = target_return, env.reset().next_state, 0, 1, False
@@ -212,7 +214,7 @@ def validate_loop(config: Config):
   tensor_R = torch.empty(1, 1, 1).to(device)
   tensor_s = torch.empty(1, 1, *config.state_shape).to(device)
   tensor_a = torch.empty(1, 1, 1).to(device)
-  tensor_t = torch.empty(1, 1, 1).to(device)
+  tensor_t = torch.empty(1, 1, 1).to(torch.int64).to(device)
 
   episode_count = 0
 
@@ -250,6 +252,11 @@ def validate_loop(config: Config):
     if episode_count % 5 == 0:
       summary_writer.add_scalar("validate/reward", episode_reward, total_steps)
 
+      with weight_lock:
+        if os.path.exists(config.checkpoint_path):
+          checkpoint = torch.load(config.checkpoint_path)
+          net.load_state_dict(checkpoint["model"])
+
 
 def set_action_space(config):
   env = gymnasium.make(config.env_name)
@@ -263,8 +270,15 @@ if __name__ == "__main__":
   set_action_space(config)
 
   # create_dataset(config)
-  train_loop(config)
 
-  p = mp.Process(target=validate_loop, args=(config, ))
+  weight_lock = mp.Lock()
+
+  p = mp.Process(target=validate_loop, args=(config, weight_lock))
   p.start()
+
+  pber = tqdm(range(config.max_epochs), position=1)
+  pber.set_description("epoch")
+  for i in range(config.max_epochs):
+    run_train_epoch(config, weight_lock)
+
   p.join()

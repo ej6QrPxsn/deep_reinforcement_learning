@@ -16,7 +16,7 @@ class Input(NamedTuple):
   rtg: torch.Tensor
   state: torch.Tensor
   action: torch.Tensor
-  timestep: int
+  timestep: torch.Tensor
 
 
 class DecisionTransformer(nn.Module):
@@ -48,7 +48,7 @@ class DecisionTransformer(nn.Module):
     self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
     self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
 
-    self.pos_emb = nn.Parameter(torch.zeros(1, config.context_length + 1, config.embed_dim))
+    self.pos_emb = nn.Parameter(torch.zeros(1, config.context_length * 3 + 1, config.embed_dim))
     self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep + 1, config.embed_dim))
 
     self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
@@ -78,12 +78,7 @@ class DecisionTransformer(nn.Module):
 
     all_global_pos_emb = torch.repeat_interleave(self.global_pos_emb, batch_size, dim=0)  # batch_size, traj_length, n_embd
 
-    a = torch.repeat_interleave(input.timestep, self.config.embed_dim, dim=-1)
-    print(a.shape)
-    print(all_global_pos_emb.shape)
-    b = torch.gather(all_global_pos_emb, 1, a)
-    c = b + self.pos_emb[:, :embed_token.shape[1], :]
-    pos_encoding = c
+    pos_encoding = torch.gather(all_global_pos_emb, 1, torch.repeat_interleave(input.timestep, self.config.embed_dim, dim=-1)) + self.pos_emb[:, :embed_token.shape[1], :]
 
     return embed_token + pos_encoding
 
@@ -132,8 +127,8 @@ class MultiHeadLayer(nn.Module):
 
     self.config = config
 
-    self.register_buffer("mask", torch.tril(torch.ones(config.n_features + 1, config.n_features + 1))
-                         .view(1, 1, config.n_features + 1, config.n_features + 1))
+    self.register_buffer("mask", torch.tril(torch.ones(config.context_length, config.context_length))
+                         .view(1, 1, config.context_length, config.context_length))
     self.head_dim = config.embed_dim // config.n_head
 
     self.query = nn.Linear(in_features=config.embed_dim, out_features=config.embed_dim)

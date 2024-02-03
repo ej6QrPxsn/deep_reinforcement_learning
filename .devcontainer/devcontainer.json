@@ -8,7 +8,12 @@
     "mounts": [
         "source=D:\\data,target=/workspace/data,type=bind,consistency=cached"
     ],
-    "runArgs": ["--gpus", "all","--shm-size","8gb"],
+    "runArgs": [
+        "--gpus", "all",
+        "--shm-size","8gb",
+        "--name", "gpu_drl",
+        "-t", "ubuntu/gpu_drl"
+    ],
     // Configure tool-specific properties.
     "customizations": {
         // Configure properties specific to VS Code.

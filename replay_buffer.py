@@ -2,11 +2,9 @@
 
 import time
 import numpy as np
-
+from tqdm import tqdm
 
 import zstandard as zstd
-
-from local_buffer import LocalBuffer
 
 
 class ReplayBuffer:
@@ -18,11 +16,9 @@ class ReplayBuffer:
     self.sample_queue = sample_queue
     self.config = config
     self.data_type = data_type
-    self.local_buffer = LocalBuffer(config, data_type)
     self.rng = np.random.default_rng()
 
     self.fill = False
-
     self.sample_data = np.empty(config.batch_size, dtype=data_type.transition_dtype)
 
   def _add(self, data):
@@ -38,6 +34,8 @@ class ReplayBuffer:
 
   def replay_loop(self, load_queue):
     dctx = zstd.ZstdDecompressor()
+    bar = tqdm(total=self.config.min_replay_size, position=3)
+    bar.set_description('replay')
 
     count = 0
 
@@ -49,6 +47,12 @@ class ReplayBuffer:
           break
 
       self._add(data)
+      if bar:
+        if len(self.data_list) <= self.config.min_replay_size:
+          bar.update(1)
+        else:
+          bar.close()
+          bar = None
 
       if self.sample_queue.empty():
         if self.fill:
@@ -99,10 +103,10 @@ class ReplayBuffer:
     for i, index in enumerate(indexes):
       # バッファから解凍して取得
       self.sample_data[i] = np.frombuffer(dctx.decompress(self.data[index], max_output_size=self.data_type.transition_dtype.itemsize),
-                                          dtype=self.data_type.transition_dtype)[0].copy()
+                                          dtype=self.data_type.transition_dtype)
       # 取得インデクスはデータリストから削除
       self.data_list.pop(0)
       # 空きリストに追加
       self.empty_list.append(index)
 
-    self.sample_queue.put(self.sample_data)
+    self.sample_queue.put(self.sample_data[:batch_size])
