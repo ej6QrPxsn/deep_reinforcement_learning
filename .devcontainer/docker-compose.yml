@@ -10,6 +10,8 @@ services:
       args:
         - USER_NAME=${USER_NAME}
         - GROUP_NAME=${GROUP_NAME}
+        - UID=${UID}
+        - GID=${GID}
     user: ${USER_NAME}
     volumes:
       - type: bind

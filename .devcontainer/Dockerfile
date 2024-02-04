@@ -2,6 +2,8 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 ARG USER_NAME
 ARG GROUP_NAME
+ARG UID
+ARG GID
 
 RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
 
@@ -12,14 +14,14 @@ RUN apt-get update && apt-get install -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m $USER_NAME && \
-echo "$USER_NAME:$USER_NAME" | chpasswd
+RUN groupadd -g $GID $GROUP_NAME && \
+    useradd -m -s /bin/bash -u $UID -g $GID $USER_NAME
 
 USER $USER_NAME
 
 WORKDIR /workspace
 
-RUN echo "export PATH='/home/$USER_NAME/.local/bin:$PATH'" >> ~/.bashrc && source ~/.bashrc
+RUN echo "export PATH='/home/$USER_NAME/.local/bin:$PATH'" >> ~/.bashrc && . ~/.bashrc
 
 COPY --chown=$USER_NAME:$USER_NAME requirements.txt requirements.txt
 

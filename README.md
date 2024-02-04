@@ -13,12 +13,17 @@ Decision TransformerをPytorchで実装しています。
 
 ## 実行準備
 
+### コンテナ構築
 ```
 cd .devcontainer
 docker-compose -f docker-compose.yml up -d
-docker run --name drl -it drl /bin/bash
 ```
-または、devcontainerを使う場合は、devcontainerをインストールして起動
+
+### コンテナにアタッチ
+```
+docker exec -it drl_container bash
+```
+devcontainerを使う場合は、devcontainerをインストール後、コンテナプロセスにアタッチ
 
 ## 実行
 
