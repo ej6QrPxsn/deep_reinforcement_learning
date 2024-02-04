@@ -1,0 +1,20 @@
+services:
+  drl:
+    image: ubuntu/drl
+    container_name: drl
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    user: yoshi
+    volumes:
+      - ..:/workspaces:cached      
+    ports:
+      - 6006:6006
+    command: nvidia-smi
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -7,3 +7,4 @@ zstandard==0.21.0
 tensorboard==2.13.0
 pytest==7.4.0
 webdataset
+six

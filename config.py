@@ -22,7 +22,10 @@ class Config:
 
   # 環境実行プロセス数
   n_envs = 10
+  
   context_length = 90
+  block_size = context_length * 3
+  
   max_timestep = 100000
 
   n_steps = 2 * 500000 * context_length // n_envs
@@ -30,7 +33,7 @@ class Config:
 
   in_feature = 32
   # seq_len * (rtg, state, action)
-  n_features = context_length * 3
+  n_features = block_size
   embed_dim = 128
   n_head = 8
   n_block = 6

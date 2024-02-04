@@ -48,7 +48,7 @@ class DecisionTransformer(nn.Module):
     self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
     self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
 
-    self.pos_emb = nn.Parameter(torch.zeros(1, config.context_length * 3 + 1, config.embed_dim))
+    self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size + 1, config.embed_dim))
     self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep + 1, config.embed_dim))
 
     self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
@@ -127,8 +127,8 @@ class MultiHeadLayer(nn.Module):
 
     self.config = config
 
-    self.register_buffer("mask", torch.tril(torch.ones(config.context_length, config.context_length))
-                         .view(1, 1, config.context_length, config.context_length))
+    self.register_buffer("mask", torch.tril(torch.ones(config.block_size + 1, config.block_size + 1))
+                         .view(1, 1, config.block_size + 1, config.block_size + 1))
     self.head_dim = config.embed_dim // config.n_head
 
     self.query = nn.Linear(in_features=config.embed_dim, out_features=config.embed_dim)

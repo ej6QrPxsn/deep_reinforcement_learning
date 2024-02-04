@@ -1,19 +1,8 @@
 {
     "name": "DeepLearning",
-    "build": {
-        "dockerfile": "../Dockerfile"
-    },
-    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-    "workspaceFolder": "/workspace",
-    "mounts": [
-        "source=D:\\data,target=/workspace/data,type=bind,consistency=cached"
-    ],
-    "runArgs": [
-        "--gpus", "all",
-        "--shm-size","8gb",
-        "--name", "gpu_drl",
-        "-t", "ubuntu/gpu_drl"
-    ],
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "drl",
+    "workspaceFolder": "/workspaces",
     // Configure tool-specific properties.
     "customizations": {
         // Configure properties specific to VS Code.

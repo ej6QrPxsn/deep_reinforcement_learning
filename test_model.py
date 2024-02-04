@@ -37,7 +37,7 @@ def test_init():
   decision_transformer = DecisionTransformer(config, device)
   emb = decision_transformer.get_embeddings(input)
   torch.testing.assert_close(
-      emb.shape, (config.batch_size, config.context_length * 3, config.embed_dim))
+      emb.shape, (config.batch_size, config.block_size, config.embed_dim))
 
 
 def test_MultiHeadLayer():
@@ -59,7 +59,7 @@ def test_MultiHeadLayer():
   multi_head_layer = MultiHeadLayer(config)
   out = multi_head_layer(emb)
   torch.testing.assert_close(
-      out.shape, (config.batch_size, config.context_length * 3, config.embed_dim))
+      out.shape, (config.batch_size, config.block_size, config.embed_dim))
 
 
 def test_DecisionTransformer():

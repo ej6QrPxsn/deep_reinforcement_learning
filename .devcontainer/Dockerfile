@@ -1,5 +1,7 @@
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
+RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+
 ARG USERNAME=yoshi
 ARG GROUPNAME=yoshi
 
