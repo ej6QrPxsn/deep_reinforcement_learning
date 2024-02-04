@@ -1,9 +1,9 @@
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
-RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+ARG USER_NAME
+ARG GROUP_NAME
 
-ARG USERNAME=yoshi
-ARG GROUPNAME=yoshi
+RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
 
 RUN apt-get update && apt-get install -y \
     python3-pip \
@@ -12,13 +12,15 @@ RUN apt-get update && apt-get install -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m $USERNAME && \
-echo "$USERNAME:$USERNAME" | chpasswd
+RUN useradd -m $USER_NAME && \
+echo "$USER_NAME:$USER_NAME" | chpasswd
 
-USER $USERNAME
+USER $USER_NAME
 
-WORKDIR /workspace/deep_reinforcement_learning
+WORKDIR /workspace
 
-COPY --chown=$USERNAME:$USERNAME requirements.txt requirements.txt
+RUN echo "export PATH='/home/$USER_NAME/.local/bin:$PATH'" >> ~/.bashrc && source ~/.bashrc
+
+COPY --chown=$USER_NAME:$USER_NAME requirements.txt requirements.txt
 
 RUN pip install -r requirements.txt

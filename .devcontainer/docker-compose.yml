@@ -1,16 +1,26 @@
+version: '3.8'
+
 services:
   drl:
-    image: ubuntu/drl
-    container_name: drl
+    container_name: drl_container
+    image: drl_image
     build:
       context: ..
-      dockerfile: Dockerfile
-    user: yoshi
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        - USER_NAME=${USER_NAME}
+        - GROUP_NAME=${GROUP_NAME}
+    user: ${USER_NAME}
     volumes:
-      - ..:/workspaces:cached      
+      - type: bind
+        source: ../
+        target: /workspace
+      - type: bind
+        source: ${DATA_DIR}
+        target: /workspace/data
     ports:
       - 6006:6006
-    command: nvidia-smi
+    tty: true
     deploy:
       resources:
         reservations:

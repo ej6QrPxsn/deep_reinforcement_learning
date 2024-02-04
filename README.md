@@ -14,8 +14,9 @@ Decision TransformerをPytorchで実装しています。
 ## 実行準備
 
 ```
-docker image build -t drl_ubuntu .
-docker run --name drl-container -it drl_ubuntu /bin/bash
+cd .devcontainer
+docker-compose -f docker-compose.yml up -d
+docker run --name drl -it drl /bin/bash
 ```
 または、devcontainerを使う場合は、devcontainerをインストールして起動
 

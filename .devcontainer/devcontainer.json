@@ -2,7 +2,7 @@
     "name": "DeepLearning",
     "dockerComposeFile": "docker-compose.yml",
     "service": "drl",
-    "workspaceFolder": "/workspaces",
+    "workspaceFolder": "/workspace",
     // Configure tool-specific properties.
     "customizations": {
         // Configure properties specific to VS Code.
