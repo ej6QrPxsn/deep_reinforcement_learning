@@ -15,11 +15,12 @@ services:
     user: ${USER_NAME}
     volumes:
       - type: bind
-        source: ../
-        target: /workspace
-      - type: bind
         source: ${DATA_DIR}
         target: /workspace/data
+      - type: bind
+        source: ../
+        target: /workspace
+    working_dir: /workspace
     ports:
       - 6006:6006
     tty: true
