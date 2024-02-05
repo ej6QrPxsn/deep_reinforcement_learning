@@ -34,8 +34,13 @@ def env_loop(id, config: Config):
   time.sleep(10)
 
   writer = DataWriter(id, config)
+  
+  if id == 0:
+    pber = tqdm(range(config.n_steps), leave=False)
+  else:
+    pber = range(config.n_steps)
 
-  for i in range(config.n_steps):
+  for i in pber:
     action = rng.integers(env.action_space)
     env_output = env.step(action)
 
@@ -211,10 +216,10 @@ def validate_loop(config: Config, weight_lock):
   R, s, a, t, done = target_return, env.reset().next_state, 0, 1, False
 
   total_steps = 0
-  tensor_R = torch.empty(1, 1, 1).to(device)
-  tensor_s = torch.empty(1, 1, *config.state_shape).to(device)
-  tensor_a = torch.empty(1, 1, 1).to(device)
-  tensor_t = torch.empty(1, 1, 1).to(torch.int64).to(device)
+  tensor_R = torch.zeros(1, 1, 1).to(device)
+  tensor_s = torch.zeros(1, 1, *config.state_shape).to(device)
+  tensor_a = torch.zeros(1, 1, 1).to(device)
+  tensor_t = torch.zeros(1, 1, 1).to(torch.int64).to(device)
 
   episode_count = 0
 
@@ -252,10 +257,10 @@ def validate_loop(config: Config, weight_lock):
     if episode_count % 5 == 0:
       summary_writer.add_scalar("validate/reward", episode_reward, total_steps)
 
-      with weight_lock:
-        if os.path.exists(config.checkpoint_path):
+      if os.path.exists(config.checkpoint_path):
+        with weight_lock:
           checkpoint = torch.load(config.checkpoint_path)
-          net.load_state_dict(checkpoint["model"])
+        net.load_state_dict(checkpoint["model"])
 
 
 def set_action_space(config):
@@ -269,16 +274,14 @@ if __name__ == "__main__":
   config = Config()
   set_action_space(config)
 
-  # create_dataset(config)
-
+  create_dataset(config)
+  
   weight_lock = mp.Lock()
 
   p = mp.Process(target=validate_loop, args=(config, weight_lock))
   p.start()
 
-  pber = tqdm(range(config.max_epochs), position=1)
-  pber.set_description("epoch")
-  for i in range(config.max_epochs):
+  for i in tqdm(range(config.max_epochs)):
     run_train_epoch(config, weight_lock)
 
   p.join()

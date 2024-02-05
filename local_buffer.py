@@ -23,15 +23,19 @@ class LocalBuffer:
     self.transition = np.zeros(1, dtype=data_type.transition_dtype)
 
   def get_data(self):
-    # 報酬を逆順に
-    reverse_rewards = self._work_transition["reward"][::-1]
-    # 足し合わせて逆順にすると、最後までの報酬合計が得られる
-    total_rewards = np.cumsum(reverse_rewards)[::-1]
-
+    rtg = np.zeros(self._seq_len, dtype=np.float32)
+    # [1 2 3 4 5 6]
+    # [1 3 6 10 15 21]
+    # 報酬を足し合わせる
+    cumsum_rewards = np.cumsum(self._work_transition["reward"])
+    # return to go [21 20 18 15 11 6]
+    rtg[0] = cumsum_rewards[-1]
+    rtg[1:] = rtg[0] - cumsum_rewards[:-1]
+    
     self.transition["state"][0][:] = self._work_transition["state"]
     self.transition["action"][0][:] = self._work_transition["action"]
-    self.transition["rtg"][0][:] = total_rewards
-    if self._count > self._config.context_length:
+    self.transition["rtg"][0][:] = rtg
+    if self._count >= self._config.context_length:
       self.transition["timestep"][0] = self._count - self._seq_len
     else:
       self.transition["timestep"][0] = 0
