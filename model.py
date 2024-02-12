@@ -74,33 +74,44 @@ class DecisionTransformer(nn.Module):
     embed_token[:, 1::3, :] = embed_s
     embed_token[:, 2::3, :] = embed_a
 
-    batch_size = input.state.size()[0]
+    # global_pos_embをバッチ方向に拡張
+    # batch, max_timestep, embed_dim
+    batch_global_pos_emb = torch.repeat_interleave(self.global_pos_emb, embed_s.shape[0], dim=0)
 
-    all_global_pos_emb = torch.repeat_interleave(self.global_pos_emb, batch_size, dim=0)  # batch_size, traj_length, n_embd
+    # timestepをエンベッド方向に拡張
+    # batch, 1, embed_dim
+    timestep_emb = torch.repeat_interleave(input.timestep, self.config.embed_dim, dim=-1)
 
-    pos_encoding = torch.gather(all_global_pos_emb, 1, torch.repeat_interleave(input.timestep, self.config.embed_dim, dim=-1)) + self.pos_emb[:, :embed_token.shape[1], :]
+    # global_pos_embから、timestep位置にある値を取得する
+    # batch, 1, embed_dim
+    global_timestep_pos_emb = torch.gather(batch_global_pos_emb, 1, timestep_emb)
+
+    # pos_embをトークン長さに制限
+    # 1, token_len, embed_dim
+    token_len_pos_emb = self.pos_emb[:, :embed_token.shape[1], :]
+
+    pos_encoding = global_timestep_pos_emb + token_len_pos_emb
 
     return embed_token + pos_encoding
 
   def forward(self, input: Input):
+    batch, seq = input.state.shape[:2]
     embeddings = self.get_embeddings(input)
 
     # batch, 3K, embed_dim
     output = self.blocks(self.drop(embeddings))
     # batch, 3K, embed_dim
 
-    batch, K_3, embed_dim = embeddings.size()
-
     output = self.action_norm(output)
 
-    # アクションのみ使う
+    # 状態のみ使う
+    # アクションだと学習できない
+    # 状態でも学習できないらしい
     # batch, 3K, embed_dim -> batch, K, embed_dim
-    action_out = output[:, 2::3, :]
-
-    action = self.action_linear(action_out)
+    logits = self.action_linear(output[:, 1::3, :])
     # batch, K, action_size
 
-    return action
+    return F.softmax(logits, dim=-1)
 
 
 class CasualTransformerBlock(nn.Module):

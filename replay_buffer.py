@@ -34,7 +34,7 @@ class ReplayBuffer:
 
   def replay_loop(self, load_queue):
     dctx = zstd.ZstdDecompressor()
-    bar = tqdm(total=self.config.min_replay_size, position=3)
+    bar = tqdm(total=self.config.min_replay_size, position=2)
     bar.set_description('replay')
 
     count = 0
@@ -109,4 +109,4 @@ class ReplayBuffer:
       # 空きリストに追加
       self.empty_list.append(index)
 
-    self.sample_queue.put(self.sample_data[:batch_size])
+    self.sample_queue.put(self.sample_data)

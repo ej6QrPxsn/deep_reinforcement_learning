@@ -50,7 +50,7 @@ class DataWriter:
     time = now.strftime("%Y%m%d-%H%M%S-%f")
     key_str = time
 
-    if self.rng.random() < self.config.train_date_ratio:
+    if self.rng.random() <= self.config.train_date_ratio:
       self.train_writer.write({
           "__key__": key_str,
           "bytes": data,

@@ -35,12 +35,14 @@ class Env:
 
 
 class AtariEnv(Env):
-  def __init__(self, env_name) -> None:
+  def __init__(self, env_name, max_step) -> None:
     self.env = gymnasium.make(env_name)
     self.action_space = self.env.action_space.n
 
     self.frames = None
     self.next_state = None
+    self.count = 0
+    self.max_step = max_step
 
   def __reset(self):
     #: ゲーム画面を二値化したりトリミングしたりする前処理
@@ -60,12 +62,15 @@ class AtariEnv(Env):
 
   def step(self, action) -> EnvOutput:
     next_frame, reward, terminated, truncated, info = self.env.step(action)
-    done = terminated or truncated
+    self.count += 1
+
+    done = terminated or truncated or self.count >= self.max_step
     self.frames.append(preprocess_frame(next_frame))
 
     # エピソード終了
     if done:
       next_state = self.__reset()
+      self.count = 0
     else:
       next_state = np.stack(self.frames, axis=0)
 
@@ -76,7 +81,7 @@ class BatchedEnv(Env):
   def __init__(self, config: Config) -> None:
     self.envs = np.zeros(config.n_env_batches, dtype=object)
     for i in range(config.n_env_batches):
-      self.envs[i] = AtariEnv(config.env_name)
+      self.envs[i] = AtariEnv(config.env_name, config.max_timestep)
 
     self.next_states = np.empty((config.n_env_batches, *config.state_shape))
     self.rewards = np.zeros(config.n_env_batches)
@@ -97,5 +102,13 @@ class BatchedEnv(Env):
 
   def reset(self):
     for i, env in enumerate(self.envs):
-      self.next_states[i] = env.reset()
-    return self.next_states
+      self.next_states[i] = env.reset().next_state
+
+    self.rewards[:] = 0
+    self.dones[:] = False
+
+    return EnvOutput(
+        next_state=self.next_states,
+        reward=self.rewards,
+        done=self.dones,
+    )
