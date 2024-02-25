@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from config import Config
 import numpy as np
 import webdataset as wds
 import datetime as dt
@@ -26,7 +27,7 @@ def info_from_json(id, shard_dir):
 
 
 class DataWriter:
-  def __init__(self, id, config) -> None:
+  def __init__(self, id, config: Config) -> None:
     self.train_count = 0
     self.validate_count = 0
     self.config = config
@@ -47,7 +48,7 @@ class DataWriter:
 
   def write_train_data(self, data):
     now = dt.datetime.now()
-    time = now.strftime("%Y%m%d-%H%M%S-%f")
+    time = now.strftime(f"{self.config.env_name}_%Y%m%d-%H%M%S-%f")
     key_str = time
 
     if self.rng.random() <= self.config.train_date_ratio:
