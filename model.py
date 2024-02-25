@@ -111,7 +111,7 @@ class DecisionTransformer(nn.Module):
     logits = self.action_linear(output[:, 1::3, :])
     # batch, K, action_size
 
-    return F.softmax(logits, dim=-1)
+    return logits[:, -1, :]
 
 
 class CasualTransformerBlock(nn.Module):

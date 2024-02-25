@@ -83,7 +83,7 @@ class BatchedEnv(Env):
     for i in range(config.n_env_batches):
       self.envs[i] = AtariEnv(config.env_name, config.max_timestep)
 
-    self.next_states = np.empty((config.n_env_batches, *config.state_shape))
+    self.next_states = np.empty((config.n_env_batches, *config.state_shape), dtype=np.uint8)
     self.rewards = np.zeros(config.n_env_batches)
     self.dones = np.zeros(config.n_env_batches, dtype=bool)
 

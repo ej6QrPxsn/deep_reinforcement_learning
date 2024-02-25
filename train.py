@@ -10,7 +10,7 @@ from data_loader import SingleDataLoader
 from data_type import DataType
 from data_writer import DataWriter
 from env import AtariEnv, BatchedEnv
-from local_buffer import LocalBuffer, Transition
+from local_buffer import Transition
 import multiprocessing as mp
 from model import DecisionTransformer, Input
 from tqdm import tqdm
@@ -52,17 +52,16 @@ def env_loop(ids, config: Config):
     indexes += 1
 
     for i in range(config.n_env_batches):
-      compressed_data = ctx.compress(
-        pickle.dumps(
-          Transition(
-            states[i],
-            current_actions[i],
-            env_output.reward[i],
-            env_output.done[i]
-          )
+      bytes = states[i].tobytes()
+      data = pickle.dumps(
+        Transition(
+          ctx.compress(states[i].tobytes()),
+          current_actions[i],
+          env_output.reward[i],
+          env_output.done[i]
         )
       )
-      writers[i].write_train_data(compressed_data)
+      writers[i].write_train_data(data)
 
     done_ids = np.where(env_output.done)[0]
     if len(done_ids) > 0:
@@ -96,24 +95,16 @@ def create_dataset(config: Config, ids):
 
 def load_loop(ids, data_queue, data_type, config):
   data_loaders = []
-  load_end_flags = []
+  load_end_flags = np.zeros(len(ids), dtype=bool)
   for id in ids:
     data_loaders.append(SingleDataLoader(id, config, data_type))
-    load_end_flags.append(False)
-
-  cctx = zstd.ZstdCompressor()
-  dctx = zstd.ZstdDecompressor()
 
   while True:
     for i, data_loader in enumerate(data_loaders):
       if not load_end_flags[i]:
-        data = data_loader.get_replay_data(dctx)
-        if data:
-          # 圧縮してキューに追加
-          data_queue.put(cctx.compress(data))
-
-        # ロード終了のローダー
-        if data_loader.end:
+        ret = data_loader.load(data_queue)
+        # ローダーの読み込み終了
+        if ret is None:
           load_end_flags[i] = True
 
     end_list = np.where(load_end_flags)[0]
@@ -130,7 +121,7 @@ def get_input(data, device):
   )
 
 
-def run_train_epoch(config: Config, weight_lock, ids):
+def run_train_epoch(config: Config, weight_lock, ids, total_steps):
   device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
   device = torch.device(device_type)
   summary_writer = SummaryWriter("logs")
@@ -153,15 +144,14 @@ def run_train_epoch(config: Config, weight_lock, ids):
     opt.load_state_dict(checkpoint["optimizer"])
     scaler.load_state_dict(checkpoint["scaler"])
 
-  total_steps = 0
   sample_queue = mp.Queue()
-  load_queue = mp.Queue()
+  load_queue = mp.SimpleQueue()
 
-  replay = ReplayBuffer(config, data_type, sample_queue)
+  replay = ReplayBuffer(config, data_type)
 
   processes = []
 
-  p = mp.Process(target=replay.replay_loop, args=(load_queue, ))
+  p = mp.Process(target=replay.replay_loop, args=(load_queue, sample_queue))
   p.start()
   processes.append(p)
 
@@ -170,7 +160,7 @@ def run_train_epoch(config: Config, weight_lock, ids):
     p.start()
     processes.append(p)
 
-  criteria = torch.nn.MSELoss(reduction="none")
+  criteria = torch.nn.CrossEntropyLoss(reduction="none")
 
   data = sample_queue.get()
   while data is not None:
@@ -178,12 +168,10 @@ def run_train_epoch(config: Config, weight_lock, ids):
     input = get_input(data, device)
 
     with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
-      probs = net(input)
-      target = F.one_hot((input.action).to(torch.int64).squeeze(-1), num_classes=config.action_size)
-      target = target.to(torch.float32)
+      logits = net(input)
+      target = input.action[:, -1, 0].to(torch.long)
 
-      loss = criteria(probs, target)
-      loss = loss.sum(dim=-1)
+      loss = criteria(logits, target)
       loss = loss.mean()
 
     scaler.scale(loss).backward()
@@ -213,6 +201,11 @@ def run_train_epoch(config: Config, weight_lock, ids):
 
     data = sample_queue.get()
 
+  for p in processes:
+    p.join()
+
+  return total_steps
+
 
 def validate_loop(config: Config, weight_lock):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -235,47 +228,46 @@ def validate_loop(config: Config, weight_lock):
   target_return = 90
 
   total_steps = 0
-  episode_count = 0
-  data_type = DataType(config)
+  tensor_R = torch.zeros(1, 1, 1).to(device)
+  tensor_s = torch.zeros(1, 1, *config.state_shape).to(device)
+  tensor_a = torch.zeros(1, 1, 1).to(device)
+  tensor_t = torch.zeros(1, 1, 1).to(torch.int64).to(device)
 
-  local_buffer = LocalBuffer(config, data_type)
+  episode_count = 0
 
   while True:
-    R = target_return
-    action = 0
-    done = False
+    R, s, a, t, done = target_return, env.reset().next_state, 0, 1, False
 
     episode_reward = 0
     episode_count += 1
-
-    env_output = env.reset()
-
     while not done:
-
-      transition = local_buffer.add_and_get_transition_data(Transition(
-        env_output.next_state,
-        action,
-        R,
-        done
-      ))
-
-      input = get_input(transition, device)
+      tensor_R[:] = R
+      tensor_s[:] = torch.from_numpy(s)
+      tensor_a[:] = a
+      tensor_t[:] = t
+      input = Input(
+        rtg=tensor_R,
+        state=tensor_s,
+        action=tensor_a,
+        timestep=tensor_t,
+      )
 
       with torch.no_grad():
-        # 最新のパラメーターが次の状態、次のrtg
-        # 合致するアクションを返す
-        probs = net(input)
-      action = torch.multinomial(probs[:, -1, :], num_samples=1).item()
+        logits = net(input)
+      probs = F.softmax(logits, dim=-1)
+      action = torch.multinomial(probs, num_samples=1).item()
       env_output = env.step(action)
 
-      done = env_output.done
-
       R = R - env_output.reward
+      s = env_output.next_state
+      a = action
+      t += 1
+      done = env_output.done
 
       episode_reward += env_output.reward
       total_steps += 1
 
-      if total_steps % 100 == 0:
+      if total_steps % 10 == 0:
         if os.path.exists(config.checkpoint_path):
           with weight_lock:
             checkpoint = torch.load(config.checkpoint_path)
@@ -306,7 +298,8 @@ if __name__ == "__main__":
   p = mp.Process(target=validate_loop, args=(config, weight_lock))
   p.start()
 
-  for i in tqdm(range(config.max_epochs)):
-    run_train_epoch(config, weight_lock, ids)
+  total_steps = 0
+  for i in range(config.max_epochs):
+    total_steps = run_train_epoch(config, weight_lock, ids, total_steps)
 
   p.join()
