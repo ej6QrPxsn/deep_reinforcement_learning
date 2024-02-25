@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  drl:
+    container_name: drl_container
+    image: drl_image
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        - USER_NAME=${USER_NAME}
+        - GROUP_NAME=${GROUP_NAME}
+        - UID=${UID}
+        - GID=${GID}
+    user: ${USER_NAME}
+    volumes:
+      - type: bind
+        source: ${DATA_DIR}
+        target: /workspace/data
+      - type: bind
+        source: ../
+        target: /workspace
+    working_dir: /workspace
+    ports:
+      - 6006:6006
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

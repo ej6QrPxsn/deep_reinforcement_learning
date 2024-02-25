@@ -1,0 +1,34 @@
+{
+    "name": "DeepLearning",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "drl",
+    "workspaceFolder": "/workspace",
+    // Configure tool-specific properties.
+    "customizations": {
+        // Configure properties specific to VS Code.
+        "vscode": {
+            // Set *default* container specific settings.json values on container create.
+            "settings": { 
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.linting.enabled": true,
+                "python.formatting.autopep8Path": "/usr/local/py-utils/bin/autopep8",
+                // デフォルトで`"terminal.integrated.profiles.linux"`の`"bash"`をターミナルで起動させる。
+                "terminal.integrated.defaultProfile.linux": "bash",
+                // シェルのプロファイル名に対して`"path"`で実行するシェルのパスを指定し、`"args"`で起動時の引数を指定する。
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "bash",
+                        "args": [
+                            "-l"
+                        ]
+                    }
+                }
+           },
+            
+            // Add the IDs of extensions you want installed when the container is created.
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }
+}

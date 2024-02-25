@@ -34,6 +34,12 @@ if __name__ == "__main__":
   env = AtariEnv(config.env_name)
   config.init(env.action_space, env.reset().shape)
 
+  if not os.path.exists(config.train_data_dir):
+    os.makedirs(config.train_data_dir)
+
+  if not os.path.exists(config.validate_data_dir):
+    os.makedirs(config.validate_data_dir)
+
   data_type = DataType(config)
 
   processes = []

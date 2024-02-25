@@ -7,6 +7,15 @@ class Config:
   env_name = "BreakoutDeterministic-v4"
   shared_env_name = "shared_env_name-v4"
 
+  # 訓練データ作成
+  train_data_dir = "data/Breakout_train"
+  validate_data_dir = "data/Breakout_validate"
+  train_filename = "train-%05d.tar"
+  validate_filename = "validate-%05d.tar"
+  # 訓練データの割合
+  train_date_ratio = 1
+  shard_size = 50 * 1000 * 1000
+
   action_space = None
   state_shape = None
 
@@ -19,7 +28,7 @@ class Config:
   shared_transition_name = "shared_transition_name"
 
   # バッチ数
-  batch_size = 64
+  batch_size = 4
 
   replay_period = 32
   trace_length = 32
@@ -27,14 +36,16 @@ class Config:
   # シーケンス数
   seq_len = replay_period + trace_length
 
+  train_steps = (2 * 500000 - seq_len) // batch_size
+
   # アクター数
-  num_actors = 16
+  num_actors = 8
   # 1アクターあたり環境数
   num_env_batches = 16
   # 全環境数
   num_train_envs = num_actors * num_env_batches
   # 推論プロセス数
-  num_inferences = 4
+  num_inferences = 2
 
   # 評価環境
   num_eval_envs = 1
