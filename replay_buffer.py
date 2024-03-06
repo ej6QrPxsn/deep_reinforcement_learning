@@ -48,6 +48,8 @@ class ReplayBuffer:
         load_complete_count += 1
         if load_complete_count == self._config.n_loads:
           break
+        else:
+          continue
 
       self._add_data(data)
       if bar:
@@ -70,7 +72,7 @@ class ReplayBuffer:
     while train_count < self._config.train_steps:
       if sample_queue.empty():
         train_count += 1
-        sample_queue.put(self._local_buffer.sample(self._config.batch_size))
+        sample_queue.put(self._sample(dctx, self._config.batch_size))
       else:
         time.sleep(1)
 
@@ -94,23 +96,33 @@ class ReplayBuffer:
     for i, index in enumerate(indexes):
       start = index
       end = start + self._seq_len
-
-      # シーケンス終わり確定
-      dones = list(itertools.islice(self._dones, start, end))
-      done_indexes = np.where(np.array(dones))[0]
-      if done_indexes:
-        end = done_indexes[0]
+      if end > len(self._states):
+        end = len(self._states)
         start = end - self._seq_len
         if start < 0:
           start = 0
 
-      # シーケンス開始確定
-      dones = list(itertools.islice(self._dones, start, end))
-      done_indexes = np.where(np.array(dones))[0]
-      if done_indexes:
-        start = done_indexes[-1]
+      dones = np.array(list(itertools.islice(self._dones, None, end)))
+
+      # 開始位置と終了位置の間にエピソード終了があるか
+      done_indexes = np.where((start < dones) & (end < dones))[0]
+      if np.any(done_indexes):
+        # 開始位置の直後のエピソード終了位置を終了位置とする
+        end = done_indexes[0]
+        start = end - self._seq_len
+
+      if start < 0:
+        start = 0
+      else:
+        # 開始位置と終了位置の間にエピソード終了があるか
+        done_indexes = np.where((start < dones) & (end < dones))[0]
+        if np.any(done_indexes):
+          # 終了位置の直前のエピソード終了位置を開始位置とする
+          start = done_indexes[-1]
 
       bytes_list = list(itertools.islice(self._states, start, end))
+      if len(bytes_list) == 0:
+        print(index, start, end, dones)
 
       states = []
       for bytes in bytes_list:

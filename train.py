@@ -1,96 +1,18 @@
 import os
-import pickle
 import time
 import gymnasium
-import zstandard as zstd
 import numpy as np
 import torch
 from config import Config
 from data_loader import SingleDataLoader
 from data_type import DataType
-from data_writer import DataWriter
-from env import AtariEnv, BatchedEnv
-from local_buffer import Transition
 import multiprocessing as mp
 from model import DecisionTransformer, Input
-from tqdm import tqdm
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from replay_buffer import ReplayBuffer
-
-
-def env_loop(ids, config: Config):
-  rng = np.random.default_rng()
-  ctx = zstd.ZstdCompressor()
-
-  batched_env = BatchedEnv(config)
-
-  env_output = batched_env.reset()
-  states = env_output.next_state.copy()
-
-  time.sleep(10)
-
-  writers = []
-  for id in ids:
-    writers.append(DataWriter(id, config))
-
-  if 0 in ids:
-    pber = tqdm(range(config.n_steps), leave=False)
-  else:
-    pber = range(config.n_steps)
-
-  batches = np.arange(config.n_env_batches)
-  indexes = np.zeros(config.n_env_batches, dtype=np.int32)
-  max_timestep = config.max_timestep
-  actions = rng.integers(0, config.action_size, (config.n_env_batches, max_timestep))
-
-  for _ in pber:
-    current_actions = actions[batches, indexes]
-    env_output = batched_env.step(current_actions)
-
-    indexes += 1
-
-    for i in range(config.n_env_batches):
-      bytes = states[i].tobytes()
-      data = pickle.dumps(
-        Transition(
-          ctx.compress(states[i].tobytes()),
-          current_actions[i],
-          env_output.reward[i],
-          env_output.done[i]
-        )
-      )
-      writers[i].write_train_data(data)
-
-    done_ids = np.where(env_output.done)[0]
-    if len(done_ids) > 0:
-      indexes[done_ids] = 0
-      actions[done_ids] = rng.integers(0, config.action_size, (len(done_ids), config.max_timestep))
-
-    states[:] = env_output.next_state
-
-  for writer in writers:
-    writer.write_end()
-
-
-def create_dataset(config: Config, ids):
-  if not os.path.exists(config.train_data_dir):
-    os.makedirs(config.train_data_dir)
-
-  if not os.path.exists(config.validate_data_dir):
-    os.makedirs(config.validate_data_dir)
-
-  processes = []
-
-  # 訓練データ取得
-  for i in range(config.n_envs):
-    p = mp.Process(target=env_loop, args=(ids[i], config))
-    p.start()
-    processes.append(p)
-
-  for p in processes:
-    p.join()
+from target_manager import TargetManager
 
 
 def load_loop(ids, data_queue, data_type, config):
@@ -121,16 +43,15 @@ def get_input(data, device):
   )
 
 
-def run_train_epoch(config: Config, weight_lock, ids, total_steps):
+def train(config: Config):
+  data_type = DataType(config)
   device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
   device = torch.device(device_type)
   summary_writer = SummaryWriter("logs")
 
-  data_type = DataType(config)
-
   net = DecisionTransformer(config, device).to(device)
   net.train()
-
+  criteria = torch.nn.CrossEntropyLoss(reduction="none")
   opt = torch.optim.Adam(
       params=net.parameters(),
       lr=config.adam_lr,
@@ -138,80 +59,85 @@ def run_train_epoch(config: Config, weight_lock, ids, total_steps):
   )
   scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp)
 
-  if os.path.exists(config.checkpoint_path):
-    checkpoint = torch.load(config.checkpoint_path)
-    net.load_state_dict(checkpoint["model"])
-    opt.load_state_dict(checkpoint["optimizer"])
-    scaler.load_state_dict(checkpoint["scaler"])
+  def run_train_epoch(weight_lock, ids, total_steps):
+    if os.path.exists(config.checkpoint_path):
+      checkpoint = torch.load(config.checkpoint_path)
+      net.load_state_dict(checkpoint["model"])
+      opt.load_state_dict(checkpoint["optimizer"])
+      scaler.load_state_dict(checkpoint["scaler"])
 
-  sample_queue = mp.Queue()
-  load_queue = mp.SimpleQueue()
+    sample_queue = mp.Queue()
+    load_queue = mp.SimpleQueue()
 
-  replay = ReplayBuffer(config, data_type)
+    replay = ReplayBuffer(config, data_type)
 
-  processes = []
+    processes = []
 
-  p = mp.Process(target=replay.replay_loop, args=(load_queue, sample_queue))
-  p.start()
-  processes.append(p)
-
-  for i in range(config.n_loads):
-    p = mp.Process(target=load_loop, args=(ids[i], load_queue, data_type, config))
+    p = mp.Process(target=replay.replay_loop, args=(load_queue, sample_queue))
     p.start()
     processes.append(p)
 
-  criteria = torch.nn.CrossEntropyLoss(reduction="none")
-
-  data = sample_queue.get()
-  while data is not None:
-
-    input = get_input(data, device)
-
-    with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
-      logits = net(input)
-      target = input.action[:, -1, 0].to(torch.long)
-
-      loss = criteria(logits, target)
-      loss = loss.mean()
-
-    scaler.scale(loss).backward()
-
-    # Unscales the gradients of optimizer's assigned parameters in-place
-    scaler.unscale_(opt)
-
-    # Since the gradients of optimizer's assigned parameters are now unscaled, clips as usual.
-    # You may use the same value for max_norm here as you would without gradient scaling.
-    torch.nn.utils.clip_grad_norm_(net.parameters(), config.grad_norm_clip)
-
-    scaler.step(opt)
-    scaler.update()
-    opt.zero_grad()  # set_to_none=True here can modestly improve performance
-
-    total_steps += 1
-    summary_writer.add_scalar("train/loss", loss, total_steps)
-
-    if total_steps % 10 == 0:
-
-      checkpoint = {"model": net.cpu().state_dict(),
-                    "optimizer": opt.state_dict(),
-                    "scaler": scaler.state_dict()}
-      with weight_lock:
-        torch.save(checkpoint, config.checkpoint_path)
-      net.to(device)
+    for i in range(config.n_loads):
+      p = mp.Process(target=load_loop, args=(ids[i], load_queue, data_type, config))
+      p.start()
+      processes.append(p)
 
     data = sample_queue.get()
 
-  for p in processes:
-    p.join()
+    while data is not None:
 
-  return total_steps
+      input = get_input(data, device)
+
+      with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
+        logits = net(input)
+        targets = input.action.to(torch.long)
+
+        loss = criteria(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+        loss = loss.mean()
+
+      scaler.scale(loss).backward()
+
+      # Unscales the gradients of optimizer's assigned parameters in-place
+      scaler.unscale_(opt)
+
+      # Since the gradients of optimizer's assigned parameters are now unscaled, clips as usual.
+      # You may use the same value for max_norm here as you would without gradient scaling.
+      torch.nn.utils.clip_grad_norm_(net.parameters(), config.grad_norm_clip)
+
+      scaler.step(opt)
+      scaler.update()
+      opt.zero_grad()  # set_to_none=True here can modestly improve performance
+
+      total_steps += 1
+      summary_writer.add_scalar("train/loss", loss, total_steps)
+
+      if total_steps % 10 == 0:
+
+        checkpoint = {"model": net.cpu().state_dict(),
+                      "optimizer": opt.state_dict(),
+                      "scaler": scaler.state_dict()}
+        with weight_lock:
+          torch.save(checkpoint, config.checkpoint_path)
+        net.to(device)
+
+      data = sample_queue.get()
+
+    for p in processes:
+      p.join()
+
+    return total_steps
+
+  total_steps = 0
+  for i in range(config.max_epochs):
+    total_steps = run_train_epoch(weight_lock, ids, total_steps)
 
 
 def validate_loop(config: Config, weight_lock):
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   summary_writer = SummaryWriter("logs")
+  manager = TargetManager(config)
 
-  env = AtariEnv(config.env_name, config.max_timestep)
+  env = manager.env(config.env_name, config.max_timestep)
   net = DecisionTransformer(config, device).to(device)
   net.eval()
 
@@ -225,7 +151,7 @@ def validate_loop(config: Config, weight_lock):
     else:
       time.sleep(10)
 
-  target_return = 90
+  target_return = 40
 
   total_steps = 0
   tensor_R = torch.zeros(1, 1, 1).to(device)
@@ -254,7 +180,7 @@ def validate_loop(config: Config, weight_lock):
 
       with torch.no_grad():
         logits = net(input)
-      probs = F.softmax(logits, dim=-1)
+      probs = F.softmax(logits[:, -1, :], dim=-1)
       action = torch.multinomial(probs, num_samples=1).item()
       env_output = env.step(action)
 
@@ -281,25 +207,39 @@ def set_action_space(config):
   config.action_size = env.action_space.n
 
 
+def create_dataset(config):
+  manager = TargetManager(config)
+
+  processes = []
+  for i in range(config.n_writers):
+    data_writer = manager.writer(i, config)
+    p = mp.Process(target=data_writer.write)
+    p.start()
+    processes.append(p)
+
+  for p in processes:
+    p.join()
+
+
 if __name__ == "__main__":
   mp.set_start_method("spawn")  # set start method to "spawn" BEFORE instantiating the queue and the event
 
   config = Config()
   set_action_space(config)
 
-  ids = np.arange(config.n_envs * config.n_env_batches)
+  ids = np.arange(config.n_envs)
   ids = ids.reshape(config.n_envs, -1)
 
   if not os.path.exists(config.train_data_dir):
-    create_dataset(config, ids)
+    os.makedirs(config.train_data_dir)
+
+  # create_dataset(config)
 
   weight_lock = mp.Lock()
 
   p = mp.Process(target=validate_loop, args=(config, weight_lock))
   p.start()
 
-  total_steps = 0
-  for i in range(config.max_epochs):
-    total_steps = run_train_epoch(config, weight_lock, ids, total_steps)
+  train(config)
 
   p.join()

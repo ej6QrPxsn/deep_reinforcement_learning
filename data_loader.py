@@ -9,7 +9,7 @@ from local_buffer import LocalBuffer
 class SingleDataLoader:
   def __init__(self, id, config, data_type) -> None:
     self.id = id
-    
+
     shards_list = [
         str(path) for path in Path(config.train_data_dir).glob(f"{id}_*.tar")
     ]
@@ -39,4 +39,5 @@ class SingleDataLoader:
     except StopIteration:
       self.dataset.close()
       self.end = True
+      data_queue.put(None)
       return None

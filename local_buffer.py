@@ -10,6 +10,7 @@ class Transition(NamedTuple):
   reward: np.float32
   done: bool
 
+
 class EpisodeTransition(NamedTuple):
   states: List[np.ndarray]
   actions: List[np.uint8]
@@ -57,6 +58,5 @@ class LocalBuffer:
       self._states = []
       self._actions = []
       self._rewards = []
-      
-      return data
 
+      return data

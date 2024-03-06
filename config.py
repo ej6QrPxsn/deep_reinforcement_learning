@@ -8,11 +8,16 @@ class Config:
   min_replay_size = 25000
   replay_size = 500000
 
-  # 環境実行プロセス数
-  n_envs = 10
+  target_type = "atari"
+
+  # 書き込みプロセス数
+  n_writers = 3
 
   # データ読み込みプロセス数
-  n_loads = 10
+  n_loads = 3
+
+  # 環境実行プロセス数
+  n_envs = 3
 
   # 訓練データの割合
   train_date_ratio = 1
