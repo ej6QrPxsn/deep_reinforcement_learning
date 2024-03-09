@@ -1,5 +1,5 @@
 import os
-import time
+from agent import Agent
 import gymnasium
 import numpy as np
 import torch
@@ -7,8 +7,7 @@ from config import Config
 from data_loader import SingleDataLoader
 from data_type import DataType
 import multiprocessing as mp
-from model import DecisionTransformer, Input
-import torch.nn.functional as F
+from model import Input
 from torch.utils.tensorboard import SummaryWriter
 
 from replay_buffer import ReplayBuffer
@@ -44,28 +43,14 @@ def get_input(data, device):
 
 
 def train(config: Config):
-  data_type = DataType(config)
+  agent = Agent(config)
   device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
   device = torch.device(device_type)
+  data_type = DataType(config)
   summary_writer = SummaryWriter("logs")
 
-  net = DecisionTransformer(config, device).to(device)
-  net.train()
-  criteria = torch.nn.CrossEntropyLoss(reduction="none")
-  opt = torch.optim.Adam(
-      params=net.parameters(),
-      lr=config.adam_lr,
-      betas=config.adam_beta,
-  )
-  scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp)
-
-  def run_train_epoch(weight_lock, ids, total_steps):
-    if os.path.exists(config.checkpoint_path):
-      checkpoint = torch.load(config.checkpoint_path)
-      net.load_state_dict(checkpoint["model"])
-      opt.load_state_dict(checkpoint["optimizer"])
-      scaler.load_state_dict(checkpoint["scaler"])
-
+  def run_train_epoch(ids):
+    steps = 0
     sample_queue = mp.Queue()
     load_queue = mp.SimpleQueue()
 
@@ -88,118 +73,24 @@ def train(config: Config):
 
       input = get_input(data, device)
 
-      with torch.autocast(device_type=device_type, dtype=torch.float16, enabled=config.use_amp):
-        logits = net(input)
-        targets = input.action.to(torch.long)
+      loss = agent.train(input)
 
-        loss = criteria(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
-        loss = loss.mean()
+      steps += 1
+      summary_writer.add_scalar("train/loss", loss, steps)
 
-      scaler.scale(loss).backward()
-
-      # Unscales the gradients of optimizer's assigned parameters in-place
-      scaler.unscale_(opt)
-
-      # Since the gradients of optimizer's assigned parameters are now unscaled, clips as usual.
-      # You may use the same value for max_norm here as you would without gradient scaling.
-      torch.nn.utils.clip_grad_norm_(net.parameters(), config.grad_norm_clip)
-
-      scaler.step(opt)
-      scaler.update()
-      opt.zero_grad()  # set_to_none=True here can modestly improve performance
-
-      total_steps += 1
-      summary_writer.add_scalar("train/loss", loss, total_steps)
-
-      if total_steps % 10 == 0:
-
-        checkpoint = {"model": net.cpu().state_dict(),
-                      "optimizer": opt.state_dict(),
-                      "scaler": scaler.state_dict()}
-        with weight_lock:
-          torch.save(checkpoint, config.checkpoint_path)
-        net.to(device)
+      if steps % 2000 == 0:
+        reward = agent.eval()
+        summary_writer.add_scalar("eval/reward", reward, steps)
 
       data = sample_queue.get()
 
     for p in processes:
       p.join()
 
-    return total_steps
+    return steps
 
-  total_steps = 0
   for i in range(config.max_epochs):
-    total_steps = run_train_epoch(weight_lock, ids, total_steps)
-
-
-def validate_loop(config: Config, weight_lock):
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  summary_writer = SummaryWriter("logs")
-  manager = TargetManager(config)
-
-  env = manager.env(config.env_name, config.max_timestep)
-  net = DecisionTransformer(config, device).to(device)
-  net.eval()
-
-  # 訓練が始まるまでループ
-  while True:
-    if os.path.exists(config.checkpoint_path):
-      with weight_lock:
-        checkpoint = torch.load(config.checkpoint_path)
-      net.load_state_dict(checkpoint["model"])
-      break
-    else:
-      time.sleep(10)
-
-  target_return = 40
-
-  total_steps = 0
-  tensor_R = torch.zeros(1, 1, 1).to(device)
-  tensor_s = torch.zeros(1, 1, *config.state_shape).to(device)
-  tensor_a = torch.zeros(1, 1, 1).to(device)
-  tensor_t = torch.zeros(1, 1, 1).to(torch.int64).to(device)
-
-  episode_count = 0
-
-  while True:
-    R, s, a, t, done = target_return, env.reset().next_state, 0, 1, False
-
-    episode_reward = 0
-    episode_count += 1
-    while not done:
-      tensor_R[:] = R
-      tensor_s[:] = torch.from_numpy(s)
-      tensor_a[:] = a
-      tensor_t[:] = t
-      input = Input(
-        rtg=tensor_R,
-        state=tensor_s,
-        action=tensor_a,
-        timestep=tensor_t,
-      )
-
-      with torch.no_grad():
-        logits = net(input)
-      probs = F.softmax(logits[:, -1, :], dim=-1)
-      action = torch.multinomial(probs, num_samples=1).item()
-      env_output = env.step(action)
-
-      R = R - env_output.reward
-      s = env_output.next_state
-      a = action
-      t += 1
-      done = env_output.done
-
-      episode_reward += env_output.reward
-      total_steps += 1
-
-      if total_steps % 10 == 0:
-        if os.path.exists(config.checkpoint_path):
-          with weight_lock:
-            checkpoint = torch.load(config.checkpoint_path)
-          net.load_state_dict(checkpoint["model"])
-
-    summary_writer.add_scalar("validate/reward", episode_reward, total_steps)
+    run_train_epoch(ids)
 
 
 def set_action_space(config):
@@ -235,11 +126,4 @@ if __name__ == "__main__":
 
   # create_dataset(config)
 
-  weight_lock = mp.Lock()
-
-  p = mp.Process(target=validate_loop, args=(config, weight_lock))
-  p.start()
-
   train(config)
-
-  p.join()
