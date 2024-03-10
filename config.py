@@ -64,4 +64,3 @@ class Config:
   adam_lr = 6 * 10 ** -4
   adam_beta = (0.9, 0.95)
   grad_norm_clip = 1.0
-  use_amp = False

@@ -22,7 +22,6 @@ class Agent:
         lr=config.adam_lr,
         betas=config.adam_beta,
     )
-    self.scaler = torch.cuda.amp.GradScaler(enabled=config.use_amp)
 
     self._config = config
     self.env = TargetManager(config).env(config.env_name, config.max_timestep)
@@ -35,36 +34,30 @@ class Agent:
       checkpoint = torch.load(self._config.checkpoint_path)
       self.net.load_state_dict(checkpoint["model"])
       self.opt.load_state_dict(checkpoint["optimizer"])
-      self.scaler.load_state_dict(checkpoint["scaler"])
 
   def save(self):
     checkpoint = {"model": self.net.cpu().state_dict(),
-                  "optimizer": self.opt.state_dict(),
-                  "scaler": self.scaler.state_dict()}
+                  "optimizer": self.opt.state_dict()}
     torch.save(checkpoint, self._config.checkpoint_path)
     self.net.to(self.device)
 
   def train(self, input):
     self.net.train()
 
-    with torch.autocast(device_type=self._data_type, dtype=torch.float16, enabled=self._config.use_amp):
-      logits = self.net(input)
-      targets = input.action.to(torch.long)
+    # with torch.autocast(device_type=self._data_type, dtype=torch.float16, enabled=self._config.use_amp):
+    logits = self.net(input)
+    targets = input.action.to(torch.long)
 
-      loss = self.criteria(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
-      loss = loss.mean()
+    loss = self.criteria(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+    loss = loss.mean()
 
-    self.scaler.scale(loss).backward()
-
-    # Unscales the gradients of optimizer's assigned parameters in-place
-    self.scaler.unscale_(self.opt)
+    loss.backward()
 
     # Since the gradients of optimizer's assigned parameters are now unscaled, clips as usual.
     # You may use the same value for max_norm here as you would without gradient scaling.
     torch.nn.utils.clip_grad_norm_(self.net.parameters(), self._config.grad_norm_clip)
 
-    self.scaler.step(self.opt)
-    self.scaler.update()
+    self.opt.step()
     self.opt.zero_grad()
 
     self.train_steps += 1

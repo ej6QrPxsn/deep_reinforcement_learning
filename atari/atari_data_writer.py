@@ -30,7 +30,7 @@ class AtariDataWriter:
           batch_size=64,
           update_horizon=1,
           gamma=0.99)
-      tmp_buffer.load("./data/Breakout/1/replay_logs", suffix=f"{suffix}")
+      tmp_buffer.load("./data/atari/Breakout/1/replay_logs", suffix=f"{suffix}")
 
       idx = 0
 
