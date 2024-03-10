@@ -78,7 +78,7 @@ def train(config: Config):
       steps += 1
       summary_writer.add_scalar("train/loss", loss, steps)
 
-      if steps % 10 == 0:
+      if steps % 1000 == 0:
         reward = agent.eval()
         summary_writer.add_scalar("eval/reward", reward, steps)
 
@@ -124,6 +124,6 @@ if __name__ == "__main__":
   if not os.path.exists(config.train_data_dir):
     os.makedirs(config.train_data_dir)
 
-  create_dataset(config)
+    create_dataset(config)
 
   train(config)

@@ -26,7 +26,7 @@ class Config:
   n_env_batches = 2
 
   n_val_episode = 1000
-  batch_size = 32
+  batch_size = 64
   action_size = 3
   input_type = "image"
 
