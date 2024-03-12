@@ -30,7 +30,7 @@ class Config:
   action_size = 3
   input_type = "image"
 
-  context_length = 90
+  context_length = 30
   block_size = context_length * 3
 
   # 最大ステップ数
@@ -64,3 +64,4 @@ class Config:
   adam_lr = 6 * 10 ** -4
   adam_beta = (0.9, 0.95)
   grad_norm_clip = 1.0
+  weight_decay = 0.1

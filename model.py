@@ -30,28 +30,28 @@ class DecisionTransformer(nn.Module):
       self.embed_s = nn.Sequential(
           # (in - (kernel - 1) - 1) / stride + 1
           # (84 - 8) / 4 + 1 = 20
-          nn.Conv2d(4, 32, kernel_size=8, stride=4, bias=False),
+          nn.Conv2d(4, 32, kernel_size=8, stride=4),
           nn.ReLU(),
           # (20 - 4) / 2 + 1 = 9
-          nn.Conv2d(32, 64, kernel_size=4, stride=2, bias=False),
+          nn.Conv2d(32, 64, kernel_size=4, stride=2),
           nn.ReLU(),
           # (9 - 3) / 1 + 1 = 7
-          nn.Conv2d(64, 64, kernel_size=3, stride=1, bias=False),
+          nn.Conv2d(64, 64, kernel_size=3, stride=1),
           nn.ReLU(),
           nn.Flatten(),
-          nn.Linear(7 * 7 * 64, config.embed_dim, bias=False),
+          nn.Linear(7 * 7 * 64, config.embed_dim),
           nn.Tanh(),
       )
     else:
       self.embed_s = nn.Sequential(nn.Linear(in_features=config.state_size,
-                                             out_features=config.embed_dim, bias=False), nn.Tanh())
-    self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
-    self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim, bias=False), nn.Tanh())
+                                             out_features=config.embed_dim), nn.Tanh())
+    self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim), nn.Tanh())
+    self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim), nn.Tanh())
 
     self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size + 1, config.embed_dim))
     self.global_pos_emb = nn.Parameter(torch.zeros(1, config.max_timestep + 1, config.embed_dim))
 
-    self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size)
+    self.action_linear = nn.Linear(in_features=config.embed_dim, out_features=config.action_size, bias=False)
 
     self.blocks = nn.Sequential(*[CasualTransformerBlock(config, device) for _ in range(config.n_block)])
     self.drop = nn.Dropout(config.embed_drop)

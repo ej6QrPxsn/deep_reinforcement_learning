@@ -76,7 +76,7 @@ class ReplayBuffer:
       else:
         time.sleep(1)
 
-    self.sample_queue.put(None)
+    sample_queue.put(None)
 
   def _add_data(self, transition: EpisodeTransition):
     add_len = transition.timestep

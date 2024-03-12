@@ -48,9 +48,9 @@ def train(config: Config):
   device = torch.device(device_type)
   data_type = DataType(config)
   summary_writer = SummaryWriter("logs")
+  steps = 0
 
-  def run_train_epoch(ids):
-    steps = 0
+  def run_train_epoch(ids, steps):
     sample_queue = mp.Queue()
     load_queue = mp.SimpleQueue()
 
@@ -90,7 +90,7 @@ def train(config: Config):
     return steps
 
   for i in range(config.max_epochs):
-    run_train_epoch(ids)
+    steps = run_train_epoch(ids, steps)
 
 
 def set_action_space(config):
