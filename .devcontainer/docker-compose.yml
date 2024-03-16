@@ -4,6 +4,7 @@ services:
   drl:
     container_name: drl_container
     image: drl_image
+    shm_size: '2gb'
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
