@@ -132,7 +132,7 @@ class Agent:
       input = Input(
         rtg=torch.tensor(np.array(rtgs)[-self._config.context_length:]).reshape(1, -1, 1).to(torch.float32).to(self.device),
         state=torch.tensor(np.array(states)[-self._config.context_length:]).unsqueeze(0).to(torch.float32).to(self.device),
-        action=torch.tensor(np.array(actions)[-self._config.context_length:]).reshape(1, -1, 1).to(torch.int64).to(self.device),
+        action=torch.tensor(np.array(actions)[-self._config.context_length:]).reshape(1, -1).to(torch.int64).to(self.device),
         timestep=torch.tensor(np.array(steps)).to(torch.int64).reshape(1, 1, 1).to(self.device),
       )
 

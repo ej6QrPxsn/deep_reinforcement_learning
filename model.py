@@ -73,8 +73,6 @@ class DecisionTransformer(nn.Module):
     embed_token = torch.empty(embed_s.shape[0], embed_s.shape[1] * 3, embed_s.shape[2]).to(self.device)
     embed_token[:, 0::3, :] = embed_R
     embed_token[:, 1::3, :] = embed_s
-    print(embed_token[:, 2::3, :].shape)
-    print(embed_s.shape)
     embed_token[:, 2::3, :] = embed_a
 
     # global_pos_embをバッチ方向に拡張
