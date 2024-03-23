@@ -45,7 +45,7 @@ class DecisionTransformer(nn.Module):
     else:
       self.embed_s = nn.Sequential(nn.Linear(in_features=config.state_size,
                                              out_features=config.embed_dim), nn.Tanh())
-    self.embed_a = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim), nn.Tanh())
+    self.embed_a = nn.Sequential(nn.Embedding(config.action_size, config.embed_dim), nn.Tanh())
     self.embed_R = nn.Sequential(nn.Linear(in_features=1, out_features=config.embed_dim), nn.Tanh())
 
     self.pos_emb = nn.Parameter(torch.zeros(1, config.block_size + 1, config.embed_dim))
@@ -59,13 +59,14 @@ class DecisionTransformer(nn.Module):
     self.action_norm = nn.LayerNorm(config.embed_dim)
 
   def get_embeddings(self, input):
+    state = input.state / 255.
 
     if self.config.input_type == "image":
-      batch, seq = input.state.size()[:2]
-      embed_s = self.embed_s(input.state.reshape(-1, *input.state.shape[2:]))
+      batch, seq = state.size()[:2]
+      embed_s = self.embed_s(state.reshape(-1, *state.shape[2:]))
       embed_s = embed_s.reshape(batch, seq, -1)
     else:
-      embed_s = self.embed_s(input.state)
+      embed_s = self.embed_s(state)
     embed_a = self.embed_a(input.action)
     embed_R = self.embed_R(input.rtg)
 

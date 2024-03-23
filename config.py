@@ -5,7 +5,7 @@ class Config:
   env_name = "BreakoutDeterministic-v4"
   checkpoint_path = "checkpoint.pth"
 
-  min_replay_size = 25000
+  min_replay_size = 50000
   replay_size = 500000
 
   target_type = "atari"
@@ -26,7 +26,7 @@ class Config:
   n_env_batches = 2
 
   n_val_episode = 1000
-  batch_size = 64
+  batch_size = 128
   action_size = 3
   input_type = "image"
 

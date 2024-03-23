@@ -23,7 +23,7 @@ class SingleDataLoader:
     self.end = False
     # total = info_from_json(id, config.train_data_dir)
 
-  def load(self, data_queue):
+  def load(self, load_queue):
 
     try:
       byte_data = next(self.data_it)[0][0]
@@ -33,11 +33,11 @@ class SingleDataLoader:
 
       episode_data = self._local_buffer.add_data(data)
       if episode_data:
-        data_queue.put(episode_data)
+        load_queue.put(episode_data)
       return True
 
     except StopIteration:
       self.dataset.close()
       self.end = True
-      data_queue.put(None)
+      load_queue.put(None)
       return None

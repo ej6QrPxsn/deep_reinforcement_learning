@@ -36,8 +36,6 @@ class ReplayBuffer:
 
   def replay_loop(self, load_queue, sample_queue):
     dctx = zstd.ZstdDecompressor()
-    bar = tqdm(total=self._config.min_replay_size, position=2)
-    bar.set_description('replay')
 
     load_complete_count = 0
     train_count = 0
@@ -52,14 +50,6 @@ class ReplayBuffer:
           continue
 
       self._add_data(data)
-      if bar:
-        if len(self._states) <= self._config.min_replay_size:
-          bar.n = len(self._states)
-          bar.refresh()
-        else:
-          self._ready = True
-          bar.close()
-          bar = None
 
       if sample_queue.empty():
         if self._ready:
@@ -104,18 +94,19 @@ class ReplayBuffer:
 
       dones = np.array(list(itertools.islice(self._dones, None, end)))
 
-      # 開始位置と終了位置の間にエピソード終了があるか
-      done_indexes = np.where((start < dones) & (end < dones))[0]
+      # 終了位置確定
+      done_indexes = np.where((start < dones) & (end > dones))[0]
       if np.any(done_indexes):
         # 開始位置の直後のエピソード終了位置を終了位置とする
         end = done_indexes[0]
         start = end - self._seq_len
 
+      # 開始位置確定
       if start < 0:
         start = 0
       else:
         # 開始位置と終了位置の間にエピソード終了があるか
-        done_indexes = np.where((start < dones) & (end < dones))[0]
+        done_indexes = np.where((start < dones) & (end > dones))[0]
         if np.any(done_indexes):
           # 終了位置の直前のエピソード終了位置を開始位置とする
           start = done_indexes[-1]

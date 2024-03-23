@@ -37,7 +37,7 @@ def get_input(data, device):
   return Input(
     rtg=torch.from_numpy((data["rtg"].astype(np.float32)).copy()).unsqueeze(-1).to(device),
     state=torch.from_numpy((data["state"].astype(np.float32)).copy()).to(device),
-    action=torch.from_numpy((data["action"].astype(np.float32)).copy()).unsqueeze(-1).to(device),
+    action=torch.from_numpy((data["action"].astype(np.int64)).copy()).unsqueeze(-1).to(device),
     timestep=torch.from_numpy(data["timestep"].astype(np.int64).copy()).reshape(-1, 1, 1).to(device),
   )
 
@@ -78,8 +78,9 @@ def train(config: Config):
       steps += 1
       summary_writer.add_scalar("train/loss", loss, steps)
 
-      if steps % 1000 == 0:
+      if steps % 100 == 0:
         reward = agent.eval()
+        print("reward: %d, steps: %d" % (reward, steps))
         summary_writer.add_scalar("eval/reward", reward, steps)
 
       data = sample_queue.get()

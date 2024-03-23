@@ -1,11 +1,11 @@
-torch==2.0.1
+torch
 numpy
 torchvision
 opencv-python
 gymnasium[atari, accept-rom-license]==0.29.0
-zstandard==0.21.0
+zstandard
 tensorboard
-pytest==7.4.0
+pytest
 webdataset
 six
 dopamine-rl
