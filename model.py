@@ -96,7 +96,6 @@ class DecisionTransformer(nn.Module):
     return embed_token + pos_encoding
 
   def forward(self, input: Input):
-    print(input.action.shape)
     batch, seq = input.state.shape[:2]
     embeddings = self.get_embeddings(input)
 
