@@ -37,7 +37,7 @@ def get_input(data, device):
   return Input(
     rtg=torch.from_numpy((data["rtg"].astype(np.float32)).copy()).unsqueeze(-1).to(device),
     state=torch.from_numpy((data["state"].astype(np.float32)).copy()).to(device),
-    action=torch.from_numpy((data["action"].astype(np.int64)).copy()).unsqueeze(-1).to(device),
+    action=torch.from_numpy((data["action"].astype(np.int64)).copy()).to(device),
     timestep=torch.from_numpy(data["timestep"].astype(np.int64).copy()).reshape(-1, 1, 1).to(device),
   )
 
